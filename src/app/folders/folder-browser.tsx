@@ -94,8 +94,6 @@ export function FolderBrowser() {
 
   function renderRows(parentId: string | null, depth = 0): ReactNode {
     return (children.get(parentId) ?? []).filter((folder) => visible.has(folder.id)).map((folder) => {
-      const siblings = children.get(parentId) ?? [];
-      const siblingIndex = siblings.findIndex((item) => item.id === folder.id);
       const choices = folders.filter((candidate) => candidate.id !== folder.id);
       return <div key={folder.id}>
         <div className="group flex min-h-[58px] items-center gap-3 border-b border-slate-100 px-4 hover:bg-slate-50" style={{ paddingLeft: 16 + depth * 24 }}>
