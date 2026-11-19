@@ -1,6 +1,21 @@
 import { Upload } from "lucide-react";
+import { AppShell, PageHeading } from "@/components/app-shell";
+import { requirePageUser } from "@/server/auth";
+import { getEnv } from "@/server/env";
 import { UploadForm } from "./upload-form";
 
-export default function UploadsPage() {
-  return <main className="min-h-screen bg-[#f7f8fa] lg:pl-[248px]"><header className="sticky top-0 z-10 flex h-[68px] items-center border-b border-[#e8ebef] bg-white px-6 md:px-10"><span className="text-sm text-slate-500">Workspace <span className="mx-2 text-slate-300">/</span><b className="font-medium text-slate-800">Upload centre</b></span></header><div className="mx-auto max-w-[1200px] px-6 py-9 md:px-10"><div className="mb-7 flex items-start gap-3"><span className="grid size-10 place-items-center rounded-xl bg-white text-slate-700 shadow-sm"><Upload size={19}/></span><div><h1 className="text-2xl font-semibold tracking-tight">Upload an asset</h1><p className="mt-1 text-sm text-slate-500">Add a file to the shared creative library.</p></div></div><UploadForm/></div></main>;
+export const dynamic = "force-dynamic";
+
+export default async function UploadsPage() {
+  const user = await requirePageUser();
+  return (
+    <AppShell user={user} active="uploads" crumb="Upload centre">
+      <div className="mx-auto max-w-[1200px] px-4 py-9 md:px-10">
+        <PageHeading icon={Upload} title="Upload media" subtitle="Add videos, audio and images to the shared library." />
+        {user.role === "viewer"
+          ? <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Your account can browse and download, but not upload. Ask an administrator for the editor role.</p>
+          : <UploadForm maxUploadBytes={getEnv().MAX_UPLOAD_BYTES} />}
+      </div>
+    </AppShell>
+  );
 }

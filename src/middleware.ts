@@ -1,30 +1,21 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-export async function middleware(request: NextRequest) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key || request.nextUrl.pathname.startsWith("/login")) return NextResponse.next();
+const SESSION_COOKIE = "tmh_session";
 
-  let response = NextResponse.next({ request });
-  const supabase = createServerClient(url, key, {
-    cookies: {
-      getAll: () => request.cookies.getAll(),
-      setAll: (cookiesToSet) => {
-        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({ request });
-        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
-      },
-    },
-  });
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = "/login";
-    loginUrl.search = "";
-    return NextResponse.redirect(loginUrl);
-  }
-  return response;
+/**
+ * Quick redirect to /login for pages when there is no session cookie at all.
+ * This is only a convenience: every page and API route validates the session against the
+ * database itself (fail closed). API routes are excluded from the matcher on purpose, so large
+ * upload bodies are streamed straight to the route instead of being buffered by middleware.
+ */
+export function middleware(request: NextRequest) {
+  if (request.cookies.get(SESSION_COOKIE)?.value) return NextResponse.next();
+  const loginUrl = request.nextUrl.clone();
+  loginUrl.pathname = "/login";
+  loginUrl.search = "";
+  return NextResponse.redirect(loginUrl);
 }
 
-export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"] };
+export const config = {
+  matcher: ["/((?!api/|login|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"],
+};

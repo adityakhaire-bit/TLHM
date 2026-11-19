@@ -1,118 +1,211 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
-import { CheckCircle2, CloudUpload, FileUp, LoaderCircle, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { DragEvent } from "react";
+import { CheckCircle2, CloudUpload, Copy, FileUp, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import { api, folderOptions, formatBytes, type FolderItem, type MediaItem } from "@/lib/client";
+import { ACCEPTED_EXTENSIONS, extensionOf } from "@/server/media-types";
 
-type Folder = { id: string; name: string; parent_id: string | null };
-type UploadSession = { assetId: string; partSizeBytes: number; partCount: number };
+type Phase = "waiting" | "uploading" | "processing" | "ready" | "duplicate" | "failed" | "cancelled";
 
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024; let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
-  return `${value.toFixed(1)} ${units[unit]}`;
-}
+type Entry = {
+  key: string;
+  file: File;
+  phase: Phase;
+  progress: number; // upload percentage
+  message: string;
+  mediaId?: string;
+  jobLabel?: string;
+};
 
-export function UploadForm() {
-  const [file, setFile] = useState<File | null>(null);
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+const PHASE_STYLE: Record<Phase, string> = {
+  waiting: "text-slate-500",
+  uploading: "text-blue-700",
+  processing: "text-blue-700",
+  ready: "text-emerald-700",
+  duplicate: "text-amber-700",
+  failed: "text-red-700",
+  cancelled: "text-slate-500",
+};
+
+const MAX_PARALLEL = 2;
+
+/** Multi-file upload with per-file progress, processing status and errors. Files stream to the SSD via /api/upload. */
+export function UploadForm({ maxUploadBytes }: { maxUploadBytes: number }) {
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [folders, setFolders] = useState<FolderItem[]>([]);
   const [folderId, setFolderId] = useState("");
-  const [folders, setFolders] = useState<Folder[]>([]);
-  const [progress, setProgress] = useState(0);
-  const [completedParts, setCompletedParts] = useState(0);
-  const [partCount, setPartCount] = useState(0);
-  const [pendingSession, setPendingSession] = useState<UploadSession | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [success, setSuccess] = useState("");
-  const [error, setError] = useState("");
-  const controller = useRef<AbortController | null>(null);
+  const [category, setCategory] = useState("");
+  const [tags, setTags] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const requests = useRef(new Map<string, XMLHttpRequest>());
+  const settings = useRef({ folderId, category, tags });
+  settings.current = { folderId, category, tags };
 
-  useEffect(() => {
-    fetch("/api/folders?all=true&limit=200", { cache: "no-store" }).then(async (response) => {
-      if (!response.ok) return;
-      const body = await response.json();
-      setFolders(body.folders as Folder[]);
-    }).catch(() => {});
+  useEffect(() => { api<{ folders: FolderItem[] }>("/api/folders").then((result) => setFolders(result.folders)).catch(() => {}); }, []);
+
+  const update = useCallback((key: string, patch: Partial<Entry>) => {
+    setEntries((current) => current.map((entry) => (entry.key === key ? { ...entry, ...patch } : entry)));
   }, []);
 
-  async function finishSession(session: UploadSession) {
-    const completeResponse = await fetch(`/api/uploads/${session.assetId}/complete`, { method: "POST" });
-    const result = await completeResponse.json();
-    if (!completeResponse.ok) throw new Error(result.error || "Could not finish upload");
-    setSuccess(result.status === "pending_review" ? "Upload complete and sent for approval." : "Upload complete. The asset is queued for processing.");
-    setPendingSession(null); setFile(null); setTitle(""); setDescription(""); setFolderId("");
+  function addFiles(list: FileList | File[]) {
+    const added: Entry[] = [];
+    for (const file of Array.from(list)) {
+      const key = `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2, 8)}`;
+      const ext = extensionOf(file.name);
+      let phase: Phase = "waiting";
+      let message = "Waiting to upload";
+      if (!ACCEPTED_EXTENSIONS.includes(ext)) { phase = "failed"; message = `.${ext || "?"} files are not supported`; }
+      else if (file.size === 0) { phase = "failed"; message = "The file is empty"; }
+      else if (file.size > maxUploadBytes) { phase = "failed"; message = `Larger than the ${formatBytes(maxUploadBytes)} limit`; }
+      added.push({ key, file, phase, progress: 0, message });
+    }
+    setEntries((current) => [...current, ...added]);
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!file) { setError("Choose a file to upload."); return; }
-    setBusy(true); setError(""); setSuccess(""); setProgress(0); setCompletedParts(0);
-    const abortController = new AbortController();
-    controller.current = abortController;
-    const { signal } = abortController;
-    let session: UploadSession | undefined;
-    let allPartsUploaded = false;
-    try {
-      const startResponse = await fetch("/api/uploads", {
-        method: "POST", headers: { "Content-Type": "application/json" }, signal,
-        body: JSON.stringify({ title: title.trim() || file.name, description: description.trim() || null, filename: file.name, mimeType: file.type || "application/octet-stream", sizeBytes: file.size, folderId: folderId || null }),
-      });
-      const start = await startResponse.json();
-      if (!startResponse.ok) throw new Error(start.error || "Could not start upload");
-      session = start as UploadSession;
-      setPartCount(session.partCount);
+  // Start waiting uploads, at most MAX_PARALLEL at a time.
+  useEffect(() => {
+    const active = entries.filter((entry) => entry.phase === "uploading").length;
+    const next = entries.filter((entry) => entry.phase === "waiting").slice(0, Math.max(0, MAX_PARALLEL - active));
+    for (const entry of next) startUpload(entry);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries]);
 
-      for (let partNumber = 1; partNumber <= session.partCount; partNumber++) {
-        const begin = (partNumber - 1) * session.partSizeBytes;
-        const end = Math.min(begin + session.partSizeBytes, file.size);
-        const partResponse = await fetch(`/api/uploads/${session.assetId}/parts`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ partNumber }), signal,
-        });
-        const part = await partResponse.json();
-        if (!partResponse.ok) throw new Error(part.error || `Could not prepare part ${partNumber}`);
-        const putResponse = await fetch(part.url as string, { method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: file.slice(begin, end), signal });
-        if (!putResponse.ok) throw new Error(`Upload failed on part ${partNumber} (HTTP ${putResponse.status})`);
-        setCompletedParts(partNumber);
-        setProgress(Math.round((end / file.size) * 100));
+  function startUpload(entry: Entry) {
+    update(entry.key, { phase: "uploading", message: "Uploading…", progress: 0 });
+    const xhr = new XMLHttpRequest();
+    requests.current.set(entry.key, xhr);
+    xhr.open("POST", "/api/upload");
+    xhr.setRequestHeader("X-File-Name", encodeURIComponent(entry.file.name));
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    const { folderId: folder, category: cat, tags: tagText } = settings.current;
+    if (folder) xhr.setRequestHeader("X-Folder-Id", folder);
+    if (cat.trim()) xhr.setRequestHeader("X-Category", encodeURIComponent(cat.trim()));
+    if (tagText.trim()) xhr.setRequestHeader("X-Tags", encodeURIComponent(tagText));
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) update(entry.key, { progress: Math.round((event.loaded / event.total) * 100), message: `Uploading… ${formatBytes(event.loaded)} of ${formatBytes(event.total)}` });
+    };
+    xhr.onload = () => {
+      requests.current.delete(entry.key);
+      let body: { ok?: boolean; data?: { status: string; message?: string; media: MediaItem }; error?: { message?: string } } = {};
+      try { body = JSON.parse(xhr.responseText); } catch { /* ignore */ }
+      if (xhr.status === 401) { window.location.href = "/login"; return; }
+      if (xhr.status === 409 && body.data?.status === "duplicate") {
+        update(entry.key, { phase: "duplicate", progress: 100, mediaId: body.data.media.id, message: body.data.message ?? "Already in the library" });
+        return;
       }
-      allPartsUploaded = true;
-      setPendingSession(session);
-      await finishSession(session);
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Upload failed";
-      setError(allPartsUploaded ? `${message}. All parts are stored; use “Retry completion” to finalize safely.` : signal.aborted ? "Upload cancelled." : message);
-      if (session && !allPartsUploaded) await fetch(`/api/uploads/${session.assetId}/abort`, { method: "POST" }).catch(() => {});
-    } finally { controller.current = null; setBusy(false); }
+      if (xhr.status >= 200 && xhr.status < 300 && body.data) {
+        const media = body.data.media;
+        update(entry.key, { phase: media.processingStatus === "ready" ? "ready" : "processing", progress: 100, mediaId: media.id, message: body.data.status === "restored" ? "Restored to the library" : "Saved to the media drive. Processing…" });
+        return;
+      }
+      update(entry.key, { phase: "failed", message: body.error?.message ?? `Upload failed (HTTP ${xhr.status})` });
+    };
+    xhr.onerror = () => { requests.current.delete(entry.key); update(entry.key, { phase: "failed", message: "Network error: the media server could not be reached" }); };
+    xhr.onabort = () => { requests.current.delete(entry.key); update(entry.key, { phase: "cancelled", message: "Cancelled. Nothing was saved." }); };
+    xhr.send(entry.file);
   }
 
-  async function retryCompletion() {
-    if (!pendingSession) return;
-    setBusy(true); setError("");
-    try { await finishSession(pendingSession); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not complete the upload"); }
-    finally { setBusy(false); }
+  // Poll processing status for uploaded files until they are ready or failed.
+  useEffect(() => {
+    const processing = entries.filter((entry) => entry.phase === "processing" && entry.mediaId);
+    if (processing.length === 0) return;
+    const timer = setInterval(async () => {
+      for (const entry of processing) {
+        try {
+          const status = await api<{ processingStatus: MediaItem["processingStatus"]; jobs: MediaItem["jobs"] }>(`/api/upload/${entry.mediaId}/status`);
+          const running = status.jobs.find((job) => job.status === "running");
+          const failed = status.jobs.find((job) => job.status === "failed");
+          if (status.processingStatus === "ready") update(entry.key, { phase: "ready", message: "Ready: preview and thumbnail generated", jobLabel: undefined });
+          else if (status.processingStatus === "failed") update(entry.key, { phase: "failed", message: `Saved, but processing failed (${failed?.jobType}): ${failed?.errorMessage ?? "unknown error"}. The original is safe.` });
+          else update(entry.key, { jobLabel: running ? `${running.jobType === "proxy" ? "Creating preview" : running.jobType === "thumbnail" ? "Creating thumbnail" : "Reading metadata"}${running.progress ? ` ${running.progress}%` : ""}` : "Queued for processing" });
+        } catch { /* keep polling */ }
+      }
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [entries, update]);
+
+  function onDrop(event: DragEvent) {
+    event.preventDefault();
+    setDragging(false);
+    if (event.dataTransfer.files.length) addFiles(event.dataTransfer.files);
   }
 
-  return <form onSubmit={submit} className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
-    <section className="rounded-xl border border-[#e8ebef] bg-white p-6">
-      <h2 className="text-base font-semibold">Choose an asset</h2>
-      <p className="mt-1 text-sm text-slate-500">Files upload directly to private Cloudflare R2 storage using short-lived links.</p>
-      <label className="mt-5 flex min-h-52 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-5 text-center hover:border-slate-400">
-        <input type="file" disabled={busy} onChange={(event) => { const selected = event.target.files?.[0] ?? null; setFile(selected); if (selected && !title) setTitle(selected.name.replace(/\.[^.]+$/, "")); setError(""); }} className="sr-only" />
-        {file ? <><FileUp size={25} className="text-slate-600"/><span className="mt-3 max-w-full truncate text-sm font-medium">{file.name}</span><span className="mt-1 text-xs text-slate-500">{formatBytes(file.size)} · {file.type || "Unknown type"}</span><span className="mt-3 text-xs text-slate-500">Choose a different file</span></> : <><CloudUpload size={27} className="text-slate-500"/><span className="mt-3 text-sm font-medium">Choose a file from your computer</span><span className="mt-1 text-xs text-slate-500">Up to 9 GB per workspace budget · video, audio, image, PDF and archive files</span></>}
-      </label>
-      <div className="mt-6 grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium">Asset title<input disabled={busy} value={title} onChange={(e) => setTitle(e.target.value)} maxLength={180} required className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none focus:border-slate-400" placeholder="Give this asset a title"/></label><label className="text-sm font-medium">Destination folder<select disabled={busy} value={folderId} onChange={(e) => setFolderId(e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal"><option value="">Workspace root</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.parent_id ? "↳ " : ""}{folder.name}</option>)}</select></label></div>
-      <label className="mt-4 block text-sm font-medium">Description <span className="font-normal text-slate-400">(optional)</span><textarea disabled={busy} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={2000} rows={3} className="mt-1.5 w-full resize-y rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none focus:border-slate-400" placeholder="Add context to help your team find this asset"/></label>
-      {error && <p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">{error}</p>}
-      {success && <p role="status" className="mt-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800"><CheckCircle2 size={16}/>{success}</p>}
-      {busy && <div className="mt-5"><div className="flex justify-between text-xs text-slate-500"><span>Uploading · {completedParts} of {partCount} parts</span><span>{progress}%</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-slate-800 transition-all" style={{ width: `${progress}%` }}/></div></div>}
-      <div className="mt-6 flex items-center justify-between gap-3"><p className="text-xs text-slate-500">Large files upload in 64 MiB parts. Unfinished sessions expire after 24 hours.</p><button disabled={busy || !file || Boolean(pendingSession)} className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#182230] px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? <><LoaderCircle size={15} className="animate-spin"/>Uploading</> : <><CloudUpload size={15}/>Upload asset</>}</button></div>
-      {busy && completedParts < partCount && <button type="button" onClick={() => controller.current?.abort()} className="mt-3 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800"><X size={13}/>Cancel upload</button>}
-      {pendingSession && !busy && <button type="button" onClick={() => void retryCompletion()} className="mt-3 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700">Retry completion</button>}
-    </section>
-    <aside className="h-fit rounded-xl border border-[#e8ebef] bg-white p-5"><h2 className="text-sm font-semibold">Upload safeguards</h2><ul className="mt-4 space-y-3 text-xs leading-5 text-slate-600"><li>• Files remain private in R2; this form does not create public links.</li><li>• The server checks your role, folder permissions, file type, and workspace storage budget.</li><li>• Storage has a 9 GB default cap to leave about 1 GB of headroom under R2’s published 10 GB-month free allowance.</li><li>• Approval-required folders keep new assets hidden from other members until review.</li></ul><p className="mt-4 border-t border-slate-100 pt-4 text-[11px] leading-5 text-slate-500">R2 credentials and bucket CORS must be configured before uploads can start. See the setup guide for the CORS rule.</p></aside>
-  </form>;
+  const uploading = entries.some((entry) => entry.phase === "uploading" || entry.phase === "waiting");
+  const options = folderOptions(folders);
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
+      <section className="rounded-xl border border-[#e8ebef] bg-white p-6">
+        <h2 className="text-base font-semibold">Choose files</h2>
+        <p className="mt-1 text-sm text-slate-500">Files are saved straight to the media drive. Previews and thumbnails are generated automatically in the background.</p>
+        <label
+          onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          className={`mt-5 flex min-h-52 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed px-5 text-center transition ${dragging ? "border-slate-600 bg-slate-100" : "border-slate-300 bg-slate-50 hover:border-slate-400"}`}
+        >
+          <input type="file" multiple accept={ACCEPTED_EXTENSIONS.map((ext) => `.${ext}`).join(",")} onChange={(event) => { if (event.target.files) addFiles(event.target.files); event.target.value = ""; }} className="sr-only" />
+          <CloudUpload size={27} className="text-slate-500" />
+          <span className="mt-3 text-sm font-medium">Drag and drop files here, or click to choose</span>
+          <span className="mt-1 text-xs text-slate-500">MP4, MOV, MKV, AVI, WebM, MP3, WAV, M4A, JPG, PNG · up to {formatBytes(maxUploadBytes)} each</span>
+        </label>
+
+        <div className="mt-6 grid gap-4 sm:grid-cols-3">
+          <label className="text-sm font-medium">Folder
+            <select value={folderId} onChange={(event) => setFolderId(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-normal">
+              <option value="">Library root</option>
+              {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+          </label>
+          <label className="text-sm font-medium">Category
+            <input value={category} onChange={(event) => setCategory(event.target.value)} maxLength={100} placeholder="e.g. Dance, Fitness, Podcast" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none focus:border-slate-400" />
+          </label>
+          <label className="text-sm font-medium">Tags
+            <input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="comma separated" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none focus:border-slate-400" />
+          </label>
+        </div>
+        <p className="mt-2 text-xs text-slate-500">Folder, category and tags apply to files added from now on. You can edit each file later in the library.</p>
+
+        {entries.length > 0 && (
+          <div className="mt-6 divide-y divide-slate-100 rounded-xl border border-slate-100">
+            {entries.map((entry) => (
+              <div key={entry.key} className="flex items-start gap-3 px-4 py-3">
+                <span className={`mt-0.5 ${PHASE_STYLE[entry.phase]}`}>
+                  {entry.phase === "ready" ? <CheckCircle2 size={17} /> : entry.phase === "failed" ? <TriangleAlert size={17} /> : entry.phase === "duplicate" ? <Copy size={17} /> : entry.phase === "uploading" || entry.phase === "processing" ? <LoaderCircle size={17} className="animate-spin" /> : <FileUp size={17} />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="truncate text-sm font-medium" title={entry.file.name}>{entry.file.name}</p>
+                    <span className="shrink-0 text-xs text-slate-500">{formatBytes(entry.file.size)}</span>
+                  </div>
+                  <p className={`mt-0.5 text-xs ${PHASE_STYLE[entry.phase]}`}>{entry.message}{entry.phase === "processing" && entry.jobLabel ? ` · ${entry.jobLabel}` : ""}</p>
+                  {entry.phase === "uploading" && <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-slate-800 transition-all" style={{ width: `${entry.progress}%` }} /></div>}
+                  {(entry.phase === "ready" || entry.phase === "duplicate") && entry.mediaId && <a href={`/library`} className="mt-1 inline-block text-xs font-medium text-slate-700 underline">Open library</a>}
+                </div>
+                {(entry.phase === "uploading" || entry.phase === "waiting") && (
+                  <button type="button" title="Cancel" onClick={() => { const xhr = requests.current.get(entry.key); if (xhr) xhr.abort(); else update(entry.key, { phase: "cancelled", message: "Cancelled" }); }} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={15} /></button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {entries.length > 0 && !uploading && (
+          <button type="button" onClick={() => setEntries((current) => current.filter((entry) => entry.phase === "processing"))} className="mt-3 text-xs text-slate-500 hover:text-slate-800">Clear finished</button>
+        )}
+      </section>
+
+      <aside className="h-fit rounded-xl border border-[#e8ebef] bg-white p-5">
+        <h2 className="text-sm font-semibold">Upload safeguards</h2>
+        <ul className="mt-4 space-y-3 text-xs leading-5 text-slate-600">
+          <li>• Files are written to the external media drive. If the drive is disconnected or full, the upload is refused and nothing is reported as saved.</li>
+          <li>• The server checks each file&apos;s real type from its contents, not its name.</li>
+          <li>• Every file gets a unique internal ID; the original filename is kept as metadata. Existing files are never overwritten.</li>
+          <li>• Uploading the same file twice is detected by checksum and does not create a copy.</li>
+          <li>• A 720p preview and a thumbnail are generated in the background. If that fails, the original stays safe.</li>
+          <li>• Keep this tab open until uploads finish. Processing continues even if you leave.</li>
+        </ul>
+      </aside>
+    </div>
+  );
 }

@@ -1,29 +1,31 @@
 import { z } from "zod";
 
+export const MAX_FOLDER_DEPTH = 8;
+
 export const createFolderSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  parent_id: z.string().uuid().nullable().optional(),
-  collection_id: z.string().uuid().nullable().optional(),
+  parentId: z.number().int().positive().nullable().optional(),
   description: z.string().trim().max(1000).nullable().optional(),
-  icon: z.string().trim().max(64).nullable().optional(),
-  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
-  sort_order: z.number().int().min(0).max(100000).optional(),
-  is_private: z.boolean().optional(),
-  require_approval: z.boolean().optional(),
 });
 
 export const updateFolderSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
-  parent_id: z.string().uuid().nullable().optional(),
-  collection_id: z.string().uuid().nullable().optional(),
+  parentId: z.number().int().positive().nullable().optional(),
   description: z.string().trim().max(1000).nullable().optional(),
-  icon: z.string().trim().max(64).nullable().optional(),
-  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
-  sort_order: z.number().int().min(0).max(100000).optional(),
-  is_private: z.boolean().optional(),
-  require_approval: z.boolean().optional(),
 }).refine((value) => Object.keys(value).length > 0, "Provide at least one field to update");
 
-export function slugifyFolderName(value: string) {
-  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 120) || "folder";
+/** Folder names are display names; they never become filesystem paths. */
+export function cleanFolderName(value: string) {
+  return value.normalize("NFC").replace(/[\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim();
+}
+
+/** Walks up from `startId` and returns the chain of ancestor ids (nearest first). */
+export function ancestorChain(startId: number | null, parentOf: Map<number, number | null>): number[] {
+  const chain: number[] = [];
+  let current = startId;
+  while (current !== null && current !== undefined && chain.length <= MAX_FOLDER_DEPTH + 1) {
+    chain.push(current);
+    current = parentOf.get(current) ?? null;
+  }
+  return chain;
 }

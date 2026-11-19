@@ -15,3 +15,6 @@ backups/
 
 *.log
 .DS_Store
+
+# Generated Prisma client (rebuilt by `npm install` / `npm run build`)
+src/generated/

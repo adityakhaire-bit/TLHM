@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Terence Media Hub worker service. Installed by scripts/install-services.sh; placeholders are filled in there. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.terencemediahub.worker</string>
+  <key>WorkingDirectory</key><string>__PROJECT_DIR__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string><string>-lc</string><string>exec npm run worker</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>__NODE_DIR__:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>NODE_ENV</key><string>production</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>__LOG_DIR__/worker.log</string>
+  <key>StandardErrorPath</key><string>__LOG_DIR__/worker.error.log</string>
+</dict>
+</plist>

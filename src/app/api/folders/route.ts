@@ -1,44 +1,44 @@
-import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { createFolderSchema, slugifyFolderName } from "@/lib/folders/validation";
+import { z } from "zod";
+import { requireUser } from "@/server/auth";
+import { prisma } from "@/server/db";
+import { ApiError, ok, readJson, route } from "@/server/http";
+import { ancestorChain, cleanFolderName, createFolderSchema, MAX_FOLDER_DEPTH } from "@/lib/folders/validation";
 
-export async function GET(request: Request) {
-  const supabase = await createSupabaseServerClient();
-  if (!supabase) return NextResponse.json({ error: "Supabase is not configured" }, { status: 503 });
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-  const { searchParams } = new URL(request.url);
-  const parent = searchParams.get("parent_id");
-  const collection = searchParams.get("collection_id");
-  const all = searchParams.get("all") === "true";
-  const limit = Math.min(Math.max(Number(searchParams.get("limit") || 100), 1), 200);
-  let query = supabase.from("folders").select("id, name, slug, parent_id, collection_id, description, icon, color, sort_order, is_archived, is_private, require_approval, created_at, updated_at").eq("is_archived", false).order("sort_order").order("name").limit(limit);
-  if (all) query = query.order("parent_id", { nullsFirst: true });
-  else query = parent ? query.eq("parent_id", parent) : query.is("parent_id", null);
-  if (collection) query = query.eq("collection_id", collection);
-  const { data, error } = await query;
-  if (error) return NextResponse.json({ error: "Unable to load folders" }, { status: 500 });
-  return NextResponse.json({ folders: data });
-}
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export async function POST(request: Request) {
-  const supabase = await createSupabaseServerClient();
-  if (!supabase) return NextResponse.json({ error: "Supabase is not configured" }, { status: 503 });
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-  let body: unknown;
-  try { body = await request.json(); } catch { return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 }); }
-  const parsed = createFolderSchema.safeParse(body);
-  if (!parsed.success) return NextResponse.json({ error: "Invalid folder details", details: parsed.error.flatten() }, { status: 400 });
-  const { data, error } = await supabase.from("folders").insert({
-    ...parsed.data,
-    slug: slugifyFolderName(parsed.data.name),
-    created_by: user.id,
-  }).select("id, name, slug, parent_id, collection_id, description, icon, color, sort_order, is_archived, is_private, require_approval, created_at, updated_at").single();
-  if (error) {
-    if (error.code === "23505") return NextResponse.json({ error: "A folder with that name already exists at this level" }, { status: 409 });
-    if (error.message.includes("nesting is limited")) return NextResponse.json({ error: "Folders can be nested up to 8 levels" }, { status: 400 });
-    return NextResponse.json({ error: "Unable to create folder. Check your role and parent folder access." }, { status: 403 });
+/** All folders (flat list with parent ids and item counts); the UI builds the tree. */
+export const GET = route(async (request) => {
+  await requireUser(request);
+  const folders = await prisma.folder.findMany({
+    orderBy: [{ name: "asc" }],
+    include: { _count: { select: { children: true, media: { where: { deletedAt: null } } } } },
+  });
+  return ok({
+    folders: folders.map((folder) => ({
+      id: folder.id, name: folder.name, parentId: folder.parentId, description: folder.description,
+      createdAt: folder.createdAt, childCount: folder._count.children, mediaCount: folder._count.media,
+    })),
+  });
+});
+
+export const POST = route(async (request) => {
+  await requireUser(request, "editor");
+  const parsed = createFolderSchema.safeParse(await readJson(request));
+  if (!parsed.success) throw new ApiError(400, "Invalid folder details", "invalid_body", z.flattenError(parsed.error).fieldErrors);
+  const name = cleanFolderName(parsed.data.name);
+  if (!name) throw new ApiError(400, "Folder name is required", "invalid_body");
+  const parentId = parsed.data.parentId ?? null;
+
+  if (parentId !== null) {
+    const all = await prisma.folder.findMany({ select: { id: true, parentId: true } });
+    const parentOf = new Map(all.map((folder) => [folder.id, folder.parentId]));
+    if (!parentOf.has(parentId)) throw new ApiError(404, "Parent folder not found", "folder_not_found");
+    if (ancestorChain(parentId, parentOf).length >= MAX_FOLDER_DEPTH) throw new ApiError(400, `Folders can be nested up to ${MAX_FOLDER_DEPTH} levels`, "too_deep");
   }
-  return NextResponse.json({ folder: data }, { status: 201 });
-}
+  const clash = await prisma.folder.findFirst({ where: { parentId, name } });
+  if (clash) throw new ApiError(409, "A folder with that name already exists here", "folder_exists");
+
+  const folder = await prisma.folder.create({ data: { name, parentId, description: parsed.data.description ?? null } });
+  return ok({ folder }, 201);
+});
