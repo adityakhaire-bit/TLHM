@@ -31,6 +31,14 @@ npm run dev              # frontend http://localhost:3000, backend http://localh
 
 Verify the backend: `curl http://localhost:4000/api/health`.
 
+## Access from other computers (Tailscale)
+
+The app is published inside the team's private Tailscale network with a real HTTPS certificate:
+`tailscale serve --bg 3000` on the Mac mini (persists across restarts; `tailscale serve --https=443 off` to stop).
+Team members install Tailscale, join the tailnet, and open `https://<mac-name>.<tailnet>.ts.net`.
+HTTPS is required for Google sign-in; add that host name in Firebase → Authentication → Settings → Authorized domains.
+Plain `http://<mac-ip>:3000` on the office network works for username/password sign-in only.
+
 ## Checks
 
 ```bash

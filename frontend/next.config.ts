@@ -11,7 +11,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["@prisma/adapter-mariadb", "mariadb", "firebase-admin"],
   // Let other computers on the office network use the development server (by Mac name or IP).
   // Comma-separated extra hosts can be added with DEV_ALLOWED_HOSTS in .env.
-  allowedDevOrigins: ["*.local", "192.168.*.*", "10.*.*.*", ...(process.env.DEV_ALLOWED_HOSTS?.split(",").map((h) => h.trim()).filter(Boolean) ?? [])],
+  allowedDevOrigins: ["*.local", "*.ts.net", "192.168.*.*", "10.*.*.*", "100.*.*.*",...(process.env.DEV_ALLOWED_HOSTS?.split(",").map((h) => h.trim()).filter(Boolean) ?? [])],
 };
 
 export default nextConfig;
