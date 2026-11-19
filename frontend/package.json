@@ -19,7 +19,9 @@
     "user:create": "tsx scripts/create-user.ts",
     "services:install": "scripts/install-services.sh",
     "services:uninstall": "scripts/install-services.sh uninstall",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "ai:analyze": "tsx scripts/ai-analyze.ts",
+    "test:e2e:ai": "tsx scripts/e2e-ai-test.ts"
   },
   "dependencies": {
     "@prisma/adapter-mariadb": "^7.10.1",

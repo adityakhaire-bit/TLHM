@@ -2,10 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { Archive, ChevronLeft, ChevronRight, Search, Upload } from "lucide-react";
+import { Archive, ChevronLeft, ChevronRight, Play, Search, Sparkles, Upload } from "lucide-react";
 import { api, errorMessage, folderOptions, type FolderItem, type MediaItem, type MediaPage } from "@/lib/client";
 import { MediaCard } from "./media-card";
+import { timecode } from "./media-ai-panel";
 import { MediaDetail } from "./media-detail";
+
+type Moment = { segmentId: number; mediaId: string; title: string; filename: string; thumbnail: string | null; startMs: number; endMs: number; description: string; shotType: string | null; matched: string[] };
+type MomentResults = { moments: Moment[]; ignored: string[]; total: number };
 
 const FILTERS = [
   { key: "all", label: "All media", params: {} },
@@ -42,6 +46,8 @@ export function LibraryBrowser({ role, initialQuery }: { role: "admin" | "editor
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [open, setOpen] = useState<MediaItem | null>(null);
+  const [openAt, setOpenAt] = useState<number | undefined>(undefined);
+  const [moments, setMoments] = useState<MomentResults | null>(null);
   const requestId = useRef(0);
 
   const searchString = useMemo(() => {
@@ -73,6 +79,24 @@ export function LibraryBrowser({ role, initialQuery }: { role: "admin" | "editor
     void load();
   }, [load, searchString]);
 
+  // Exact moments from AI metadata (database search, no AI call).
+  useEffect(() => {
+    const q = submittedQuery.trim();
+    if (!q) { setMoments(null); return; }
+    let cancelled = false;
+    api<MomentResults>(`/api/search/moments?q=${encodeURIComponent(q)}`)
+      .then((result) => { if (!cancelled) setMoments(result); })
+      .catch(() => { if (!cancelled) setMoments(null); });
+    return () => { cancelled = true; };
+  }, [submittedQuery]);
+
+  async function openMoment(moment: Moment) {
+    try {
+      const result = await api<{ media: MediaItem }>(`/api/media/${moment.mediaId}`);
+      setOpenAt(moment.startMs); setOpen(result.media);
+    } catch (cause) { setError(errorMessage(cause, "Could not open this video")); }
+  }
+
   useEffect(() => { api<{ folders: FolderItem[] }>("/api/folders").then((result) => setFolders(result.folders)).catch(() => {}); }, []);
 
   // Poll for updates: fast while anything on screen is processing, slower otherwise (picks up new uploads).
@@ -99,7 +123,7 @@ export function LibraryBrowser({ role, initialQuery }: { role: "admin" | "editor
       <form onSubmit={submit} className="flex flex-wrap items-center gap-3 rounded-xl border border-[#e8ebef] bg-white p-3">
         <div className="relative min-w-[220px] flex-1">
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, tag, folder, category or date — e.g. “Terence interview June 2026”" aria-label="Search the library" className="w-full rounded-lg border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-slate-400" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search names, tags, dates or what happens in the video — e.g. “talking in a black t-shirt”" aria-label="Search the library" className="w-full rounded-lg border border-slate-200 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-slate-400" />
         </div>
         <select aria-label="Folder" value={folder} onChange={(event) => { setFolder(event.target.value); setPage(1); }} className="max-w-[200px] rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700">
           <option value="">All folders</option>
@@ -129,6 +153,31 @@ export function LibraryBrowser({ role, initialQuery }: { role: "admin" | "editor
         {data && data.processingCount > 0 && <span className="text-blue-700">{data.processingCount} processing — updating automatically</span>}
       </div>
 
+      {moments && moments.moments.length > 0 && (
+        <section className="mt-4 rounded-xl border border-[#e8ebef] bg-white p-4" aria-label="Matching moments">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="inline-flex items-center gap-2 text-sm font-semibold"><Sparkles size={15} className="text-violet-600" />Matching moments <span className="font-normal text-slate-500">({moments.total}{moments.total > moments.moments.length ? `, showing ${moments.moments.length}` : ""})</span></h3>
+            {moments.ignored.length > 0 && <p className="text-[11px] text-slate-500">Not found in AI metadata, ignored: {moments.ignored.map((word) => `“${word}”`).join(", ")}{moments.ignored.some((word) => /terence|lewis/i.test(word)) ? " (people are not recognised by name yet)" : ""}</p>}
+          </div>
+          <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
+            {moments.moments.map((moment) => (
+              <button key={moment.segmentId} type="button" onClick={() => void openMoment(moment)} className="group w-60 shrink-0 overflow-hidden rounded-lg border border-slate-200 text-left hover:border-slate-400">
+                <div className="relative aspect-video bg-slate-900">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- authenticated API image */}
+                  {moment.thumbnail && <img src={moment.thumbnail} alt="" className="h-full w-full object-cover opacity-80" />}
+                  <span className="absolute bottom-1.5 left-1.5 inline-flex items-center gap-1 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] text-white"><Play size={10} />{timecode(moment.startMs)}–{timecode(moment.endMs)}</span>
+                </div>
+                <div className="space-y-1 p-2.5">
+                  <p className="truncate text-xs font-medium text-slate-800">{moment.title}</p>
+                  <p className="line-clamp-2 text-[11px] leading-4 text-slate-600">{moment.description}</p>
+                  {moment.matched.length > 0 && <div className="flex flex-wrap gap-1">{moment.matched.slice(0, 4).map((item) => <span key={item} className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] text-violet-800">{item}</span>)}</div>}
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       {error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
       {loading && !data ? (
@@ -142,7 +191,7 @@ export function LibraryBrowser({ role, initialQuery }: { role: "admin" | "editor
         </div>
       ) : (
         <div className={`mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 ${loading ? "opacity-60" : ""}`}>
-          {data?.items.map((item) => <MediaCard key={item.id} item={item} onOpen={setOpen} />)}
+          {data?.items.map((item) => <MediaCard key={item.id} item={item} onOpen={(media) => { setOpenAt(undefined); setOpen(media); }} />)}
         </div>
       )}
 
@@ -154,7 +203,7 @@ export function LibraryBrowser({ role, initialQuery }: { role: "admin" | "editor
         </div>
       )}
 
-      {open && <MediaDetail item={open} folders={folders} role={role} onClose={() => setOpen(null)} onChanged={onChanged} />}
+      {open && <MediaDetail key={`${open.id}-${openAt ?? 0}`} item={open} folders={folders} role={role} startAtMs={openAt} onClose={() => { setOpen(null); setOpenAt(undefined); }} onChanged={onChanged} />}
     </div>
   );
 }

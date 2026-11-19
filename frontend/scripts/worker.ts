@@ -1,6 +1,8 @@
 /**
  * Media processing worker. Run alongside the web app: `npm run worker`.
- * - Processes jobs one at a time (probe -> thumbnail -> proxy) so the Mac mini is never overloaded.
+ * - Processes media jobs one at a time (probe -> thumbnail -> proxy) so the Mac mini is never overloaded.
+ * - Runs AI analysis jobs (Gemini) in a separate lane, GEMINI_CONCURRENCY at a time, so a slow analysis never
+ *   holds up previews of new uploads.
  * - Re-queues jobs that were interrupted by a crash or restart.
  * - Removes abandoned temporary uploads older than 24 hours (uploads-temp only).
  * - Makes the automatic daily database backup onto the SSD.
@@ -11,6 +13,7 @@ import path from "node:path";
 import { createDatabaseBackup } from "@/server/backup";
 import { prisma } from "@/server/db";
 import { getEnv } from "@/server/env";
+import { geminiConfigured } from "@/server/gemini";
 import { claimNextJob, requeueInterruptedJobs, runJob } from "@/server/jobs";
 import { checkStorage, removeQuietly } from "@/server/storage";
 
@@ -69,6 +72,10 @@ async function main() {
   const storage = await checkStorage();
   await log(`worker started (pid ${process.pid}); storage: ${storage.ok ? `ok on "${storage.drive}"` : storage.message}${requeued ? `; re-queued ${requeued} interrupted job(s)` : ""}`);
 
+  const aiLanes = geminiConfigured() ? getEnv().GEMINI_CONCURRENCY : 0;
+  await log(aiLanes ? `AI analysis on: ${getEnv().GEMINI_MODEL}, ${aiLanes} at a time` : "AI analysis off (no GEMINI_API_KEY)");
+  for (let lane = 0; lane < aiLanes; lane++) void aiLoop(lane);
+
   while (!stopping) {
     try {
       if (Date.now() - lastTempCleanup > 3600 * 1000) { lastTempCleanup = Date.now(); await cleanupTempUploads(); }
@@ -92,6 +99,22 @@ async function main() {
   }
   await prisma.$disconnect();
   await log("worker stopped");
+}
+
+/** One AI lane: claims and runs analysis jobs until the worker stops. */
+async function aiLoop(lane: number) {
+  await sleep(lane * 1500); // stagger lanes so they do not all hit the API at the same moment
+  while (!stopping) {
+    try {
+      if (!(await checkStorage()).ok) { await sleep(10_000); continue; }
+      const job = await claimNextJob("ai");
+      if (!job) { await sleep(5000); continue; }
+      await runJob(job, (message) => void log(message));
+    } catch (error) {
+      await log(`AI lane ${lane} error: ${(error as Error).message}`);
+      await sleep(10_000);
+    }
+  }
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

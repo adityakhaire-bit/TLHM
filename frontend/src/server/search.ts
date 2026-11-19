@@ -70,6 +70,8 @@ export function buildMediaWhere(params: SearchParams): Prisma.MediaFileWhereInpu
           { description: { contains: word } },
           { folder: { name: { contains: word } } },
           { tags: { some: { tag: { name: { contains: word } } } } },
+          // AI metadata: summary, tags, clothing, actions, settings and transcript.
+          { analysis: { is: { searchText: { contains: word } } } },
         ],
       });
     }

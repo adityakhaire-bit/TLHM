@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Download, LoaderCircle, RotateCcw, Trash2, X } from "lucide-react";
 import {
   api, errorMessage, folderOptions, formatBytes, formatDate, formatDuration, STATUS_LABEL, STATUS_STYLE,
   type FolderItem, type MediaItem,
 } from "@/lib/client";
+import { MediaAiPanel } from "./media-ai-panel";
 
 type Props = {
   item: MediaItem;
@@ -14,10 +15,12 @@ type Props = {
   role: "admin" | "editor" | "viewer";
   onClose: () => void;
   onChanged: (item: MediaItem | null) => void;
+  /** Start playback at this position (from a search result moment). */
+  startAtMs?: number;
 };
 
 /** Media detail modal: proxy preview player, metadata, editing, downloads. */
-export function MediaDetail({ item: initial, folders, role, onClose, onChanged }: Props) {
+export function MediaDetail({ item: initial, folders, role, onClose, onChanged, startAtMs }: Props) {
   const [item, setItem] = useState(initial);
   const [title, setTitle] = useState(initial.title);
   const [category, setCategory] = useState(initial.category ?? "");
@@ -27,6 +30,15 @@ export function MediaDetail({ item: initial, folders, role, onClose, onChanged }
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const canEdit = role !== "viewer";
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const seek = useCallback((ms: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = ms / 1000;
+    void video.play().catch(() => {});
+    video.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
 
   // Keep the modal live while processing so the player appears as soon as the proxy is ready.
   useEffect(() => {
@@ -98,7 +110,7 @@ export function MediaDetail({ item: initial, folders, role, onClose, onChanged }
           <div className="bg-slate-950">
             <div className="grid aspect-video place-items-center">
               {item.mediaType === "video" && item.urls.preview ? (
-                <video key={item.urls.preview} src={item.urls.preview} poster={item.urls.thumbnail ?? undefined} controls preload="metadata" className="h-full w-full" />
+                <video ref={videoRef} key={item.urls.preview} src={startAtMs ? `${item.urls.preview}#t=${(startAtMs / 1000).toFixed(1)}` : item.urls.preview} poster={item.urls.thumbnail ?? undefined} controls preload="metadata" className="h-full w-full" />
               ) : item.mediaType === "audio" && item.urls.preview ? (
                 <audio key={item.urls.preview} src={item.urls.preview} controls preload="metadata" className="w-4/5" />
               ) : item.mediaType === "image" && item.urls.preview ? (
@@ -177,6 +189,7 @@ export function MediaDetail({ item: initial, folders, role, onClose, onChanged }
             )}
           </div>
         </div>
+        {item.mediaType === "video" && <MediaAiPanel mediaId={item.id} canEdit={canEdit} onSeek={seek} />}
       </div>
     </div>
   );

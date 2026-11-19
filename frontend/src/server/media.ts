@@ -64,7 +64,8 @@ export function followUpJobs(type: MediaType): JobType[] {
 
 /** Recomputes a media item's overall processing status from its jobs. */
 export async function refreshProcessingStatus(mediaId: string) {
-  const jobs = await prisma.processingJob.findMany({ where: { mediaId }, select: { status: true } });
+  // AI analysis is optional extra metadata: it never makes a file "failed" or "processing".
+  const jobs = await prisma.processingJob.findMany({ where: { mediaId, jobType: { not: "analyze" } }, select: { status: true } });
   let status: "pending" | "processing" | "ready" | "failed" = "pending";
   if (jobs.some((job) => job.status === "failed")) status = "failed";
   else if (jobs.length > 0 && jobs.every((job) => job.status === "completed")) status = "ready";

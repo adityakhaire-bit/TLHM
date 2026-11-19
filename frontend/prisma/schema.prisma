@@ -40,6 +40,8 @@ enum JobType {
   probe
   thumbnail
   proxy
+  // AI video analysis (Gemini). Runs in its own worker lane; never changes the file's processing status.
+  analyze
 }
 
 enum JobStatus {
@@ -167,6 +169,7 @@ model MediaFile {
   tags             MediaTag[]
   jobs             ProcessingJob[]
   storageLocations StorageLocation[]
+  analysis         MediaAnalysis?
 
   @@index([folderId, createdAt])
   @@index([mediaType, createdAt])
@@ -246,4 +249,106 @@ model Backup {
 
   @@index([status, createdAt])
   @@map("backups")
+}
+
+// ---------------------------------------------------------------------------------------------
+// AI video analysis. One current analysis per media file; re-analysing replaces these rows.
+// Everything here is derived data (it can always be regenerated from the original file).
+// ---------------------------------------------------------------------------------------------
+
+model MediaAnalysis {
+  id              Int      @id @default(autoincrement())
+  mediaId         String   @unique @map("media_id") @db.Char(36)
+  model           String   @db.VarChar(64)
+  pipelineVersion Int      @map("pipeline_version")
+  summary         String   @db.Text
+  suggestedTitle  String?  @map("suggested_title") @db.VarChar(255)
+  setting         String?  @db.VarChar(120)
+  indoorOutdoor   String?  @map("indoor_outdoor") @db.VarChar(16)
+  language        String?  @db.VarChar(40)
+  hasSpeech       Boolean  @default(false) @map("has_speech")
+  hasMusic        Boolean  @default(false) @map("has_music")
+  peopleCount     Int?     @map("people_count")
+  tags            Json
+  people          Json
+  topics          Json
+  // Lower-case text of everything above, for fast file-level search.
+  searchText      String   @map("search_text") @db.MediumText
+  inputTokens     Int      @default(0) @map("input_tokens")
+  outputTokens    Int      @default(0) @map("output_tokens")
+  elapsedMs       Int      @default(0) @map("elapsed_ms")
+  rawJson         Json     @map("raw_json")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  media      MediaFile           @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  segments   VideoSegment[]
+  attributes AnalysisAttribute[]
+  transcript TranscriptLine[]
+
+  @@map("media_analyses")
+}
+
+model VideoSegment {
+  id             Int     @id @default(autoincrement())
+  analysisId     Int     @map("analysis_id")
+  mediaId        String  @map("media_id") @db.Char(36)
+  startMs        Int     @map("start_ms")
+  endMs          Int     @map("end_ms")
+  description    String  @db.Text
+  shotType       String? @map("shot_type") @db.VarChar(40)
+  cameraMovement String? @map("camera_movement") @db.VarChar(40)
+  setting        String? @db.VarChar(120)
+  // Lower-case description + attributes (clothing, colours, actions, objects) of this segment, for moment search.
+  searchText     String  @map("search_text") @db.Text
+
+  analysis   MediaAnalysis       @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  attributes AnalysisAttribute[]
+
+  @@index([mediaId, startMs])
+  @@index([analysisId])
+  @@map("video_segments")
+}
+
+/// One structured detection: clothing, action, object, shot type, topic... with its time range.
+model AnalysisAttribute {
+  id           Int     @id @default(autoincrement())
+  analysisId   Int     @map("analysis_id")
+  mediaId      String  @map("media_id") @db.Char(36)
+  segmentId    Int?    @map("segment_id")
+  category     String  @db.VarChar(24)
+  value        String  @db.VarChar(120)
+  color        String? @db.VarChar(40)
+  pattern      String? @db.VarChar(40)
+  bodyRegion   String? @map("body_region") @db.VarChar(16)
+  personLabel  String? @map("person_label") @db.VarChar(40)
+  startMs      Int     @map("start_ms")
+  endMs        Int     @map("end_ms")
+  confidence   Float?
+  source       String  @default("gemini") @db.VarChar(24)
+  modelVersion String  @map("model_version") @db.VarChar(64)
+
+  analysis MediaAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  segment  VideoSegment? @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+
+  @@index([category, value])
+  @@index([mediaId, category])
+  @@index([analysisId])
+  @@index([segmentId])
+  @@map("analysis_attributes")
+}
+
+model TranscriptLine {
+  id         Int     @id @default(autoincrement())
+  analysisId Int     @map("analysis_id")
+  mediaId    String  @map("media_id") @db.Char(36)
+  startMs    Int     @map("start_ms")
+  endMs      Int     @map("end_ms")
+  speaker    String? @db.VarChar(40)
+  text       String  @db.Text
+
+  analysis MediaAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  @@index([mediaId, startMs])
+  @@index([analysisId])
+  @@map("transcript_lines")
 }

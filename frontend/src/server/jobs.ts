@@ -2,20 +2,28 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import type { ProcessingJob } from "@/generated/prisma/client";
 import { prisma } from "./db";
+import { analyzeMedia, queueAnalysis } from "./ai-analysis";
+import { getEnv } from "./env";
+import { GeminiError, geminiConfigured } from "./gemini";
 import { makeAudioProxy, makeThumbnail, makeVideoProxy, probe } from "./ffmpeg";
 import { followUpJobs, refreshProcessingStatus } from "./media";
 import { checkStorage, ensureStorageDirs, moveNoOverwrite, removeQuietly, resolveStoragePath } from "./storage";
 
 const MAX_ATTEMPTS = 2;
+const MAX_AI_ATTEMPTS = 5;
+
+/** Two worker lanes: fast local FFmpeg work, and slow AI analysis (network bound, runs in parallel). */
+export type JobLane = "media" | "ai";
 
 /**
  * Claims the next queued job. The conditional update (status still "queued") guarantees that two
  * workers can never run the same job, even though only one worker is normally running.
  */
-export async function claimNextJob(): Promise<ProcessingJob | null> {
+export async function claimNextJob(lane: JobLane = "media"): Promise<ProcessingJob | null> {
+  const jobType = lane === "ai" ? { equals: "analyze" as const } : { not: "analyze" as const };
   for (let tries = 0; tries < 5; tries++) {
     const next = await prisma.processingJob.findFirst({
-      where: { status: "queued", runAfter: { lte: new Date() } },
+      where: { status: "queued", runAfter: { lte: new Date() }, jobType },
       orderBy: [{ jobType: "asc" }, { id: "asc" }], // probe first, then proxy, then thumbnail (enum order)
     });
     if (!next) return null;
@@ -134,16 +142,29 @@ export async function runJob(job: ProcessingJob, log: (message: string) => void 
         }),
       ]);
       log(`job ${job.id}: proxy for ${media.id} with ${encoder} in ${Math.round((Date.now() - started) / 1000)}s`);
+      if (isVideo && getEnv().AI_AUTO_ANALYZE === "true" && geminiConfigured()) {
+        await queueAnalysis(media.id);
+        log(`job ${job.id}: queued AI analysis for ${media.id}`);
+      }
+    }
+
+    if (job.jobType === "analyze") {
+      await analyzeMedia(media.id, (message) => log(`job ${job.id}: ${message}`));
     }
 
     await prisma.processingJob.update({ where: { id: job.id }, data: { status: "completed", progress: 100, completedAt: new Date(), errorMessage: null } });
   } catch (error) {
     const message = (error as Error).message?.slice(0, 2000) || "Processing failed";
-    const retry = job.attempts < MAX_ATTEMPTS && !/missing|damaged|No (video|audio) stream/.test(message);
+    const isAi = job.jobType === "analyze";
+    const retry = isAi
+      ? job.attempts < MAX_AI_ATTEMPTS && (!(error instanceof GeminiError) || error.retryable)
+      : job.attempts < MAX_ATTEMPTS && !/missing|damaged|No (video|audio) stream/.test(message);
+    // AI: back off 1, 2, 4, 8 minutes so an overloaded or rate-limited API can recover.
+    const delay = isAi ? 60_000 * 2 ** Math.max(0, job.attempts - 1) : 30_000;
     await prisma.processingJob.update({
       where: { id: job.id },
       data: retry
-        ? { status: "queued", runAfter: new Date(Date.now() + 30_000), errorMessage: message }
+        ? { status: "queued", runAfter: new Date(Date.now() + delay), errorMessage: message }
         : { status: "failed", completedAt: new Date(), errorMessage: message },
     });
     // The original is never touched on failure. Only leftover temporary outputs are removed.

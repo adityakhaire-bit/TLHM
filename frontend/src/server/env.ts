@@ -20,6 +20,14 @@ const schema = z.object({
   // Google sign-in (Firebase Authentication). Empty ALLOWED_EMAIL_DOMAINS = Google sign-in disabled.
   FIREBASE_PROJECT_ID: z.string().optional(),
   ALLOWED_EMAIL_DOMAINS: z.string().default(""),
+  // AI video analysis (Google Gemini). Empty key = AI analysis switched off.
+  GEMINI_API_KEY: z.string().trim().default(""),
+  GEMINI_MODEL: z.string().trim().min(1).default("gemini-3.5-flash-lite"),
+  // Models to try, in order, when the main one is overloaded (comma separated).
+  GEMINI_FALLBACK_MODELS: z.string().default("gemini-3.1-flash-lite"),
+  GEMINI_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
+  // "true": every new video is analysed automatically after its preview is made.
+  AI_AUTO_ANALYZE: z.enum(["true", "false"]).default("true"),
 });
 
 export type ServerEnv = z.infer<typeof schema>;
