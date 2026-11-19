@@ -25,6 +25,11 @@ function firebaseApp() {
  * The Firebase browser session is cleared right after: the app uses its own session cookie.
  */
 export async function signInWithGoogle(hostedDomain?: string): Promise<string> {
+  // Firebase's Google sign-in needs browser security features (Web Crypto) that only exist on
+  // https:// addresses and localhost. Explain that instead of failing with "auth/internal-error".
+  if (typeof window !== "undefined" && !window.isSecureContext) {
+    throw Object.assign(new Error("insecure"), { code: "tmh/insecure-origin" });
+  }
   const app = await firebaseApp();
   const { getAuth, GoogleAuthProvider, signInWithPopup, signOut, browserSessionPersistence, setPersistence } = await import("firebase/auth");
   const auth = getAuth(app);
@@ -45,5 +50,7 @@ export function googleErrorMessage(error: unknown): string {
   if (code === "auth/unauthorized-domain") return "This address is not authorised for Google sign-in yet. An admin must add it in Firebase → Authentication → Settings → Authorized domains.";
   if (code === "auth/operation-not-allowed") return "Google sign-in is not enabled in Firebase yet (Authentication → Sign-in method → Google).";
   if (code === "auth/network-request-failed") return "No internet connection. Use your username and password instead.";
+  if (code === "tmh/insecure-origin") return "Google sign-in only works on a secure (https) address or on the Mac itself (localhost). On this computer, use your username and password for now.";
+  if (code === "auth/internal-error") return "Google sign-in could not load. A browser extension (ad or privacy blocker), antivirus or VPN may be blocking apis.google.com. Try a private window or another browser, or use your username and password.";
   return error instanceof Error ? error.message : "Google sign-in failed.";
 }
