@@ -1,0 +1,36 @@
+{
+  "indexes": [
+    { "collectionGroup": "media", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "deletedAt", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "media", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "deletedAt", "order": "ASCENDING" }, { "fieldPath": "mediaType", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "media", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "deletedAt", "order": "ASCENDING" }, { "fieldPath": "folderId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "media", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "deletedAt", "order": "ASCENDING" }, { "fieldPath": "processingStatus", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "media", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "deletedAt", "order": "ASCENDING" }, { "fieldPath": "category", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "media", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "tags", "arrayConfig": "CONTAINS" }, { "fieldPath": "deletedAt", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "media", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "searchTokens", "arrayConfig": "CONTAINS" }, { "fieldPath": "deletedAt", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "media", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "searchTokens", "arrayConfig": "CONTAINS" }, { "fieldPath": "deletedAt", "order": "ASCENDING" }, { "fieldPath": "mediaType", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] },
+    { "collectionGroup": "media", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "deletedAt", "order": "ASCENDING" }, { "fieldPath": "duration", "order": "ASCENDING" } ] },
+    { "collectionGroup": "processingJobs", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "runAfter", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "processingJobs", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "mediaId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "ASCENDING" } ] },
+    { "collectionGroup": "folders", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "parentFolderId", "order": "ASCENDING" }, { "fieldPath": "nameLower", "order": "ASCENDING" } ] },
+    { "collectionGroup": "activityLogs", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "mediaId", "order": "ASCENDING" }, { "fieldPath": "timestamp", "order": "DESCENDING" } ] },
+    { "collectionGroup": "activityLogs", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "userId", "order": "ASCENDING" }, { "fieldPath": "timestamp", "order": "DESCENDING" } ] }
+  ],
+  "fieldOverrides": [
+    { "collectionGroup": "media", "fieldPath": "probeData", "indexes": [] },
+    { "collectionGroup": "media", "fieldPath": "description", "indexes": [] }
+  ]
+}

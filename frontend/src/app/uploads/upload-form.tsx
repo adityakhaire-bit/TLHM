@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import { CheckCircle2, CloudUpload, Copy, FileUp, LoaderCircle, TriangleAlert, X } from "lucide-react";
-import { api, folderOptions, formatBytes, type FolderItem, type MediaItem } from "@/lib/client";
-import { ACCEPTED_EXTENSIONS, extensionOf } from "@/server/media-types";
+import { api, API_BASE_URL, apiUrl, folderOptions, formatBytes, type FolderItem, type MediaItem } from "@/lib/client";
+import { ACCEPTED_EXTENSIONS, extensionOf } from "@tmh/shared/media-types";
 
 type Phase = "waiting" | "uploading" | "processing" | "ready" | "duplicate" | "failed" | "cancelled";
 
@@ -75,7 +75,8 @@ export function UploadForm({ maxUploadBytes }: { maxUploadBytes: number }) {
     update(entry.key, { phase: "uploading", message: "Uploading…", progress: 0 });
     const xhr = new XMLHttpRequest();
     requests.current.set(entry.key, xhr);
-    xhr.open("POST", "/api/upload");
+    xhr.open("POST", apiUrl("/api/upload"));
+    xhr.withCredentials = Boolean(API_BASE_URL);
     xhr.setRequestHeader("X-File-Name", encodeURIComponent(entry.file.name));
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     const { folderId: folder, category: cat, tags: tagText } = settings.current;

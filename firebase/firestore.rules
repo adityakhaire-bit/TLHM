@@ -1,0 +1,69 @@
+rules_version = '2';
+
+// Terence Media Hub — Cloud Firestore security rules (design, Phase 1; deploy in Phase 2).
+//
+// Model: the browser never writes to Firestore directly. All writes (media, folders, tags, jobs,
+// activity, settings, users/roles) go through the TMH backend, which uses the Firebase Admin SDK
+// (Admin SDK requests bypass these rules) and verifies the caller's ID token and role first.
+//
+// Direct client READS are allowed only where useful for live UI updates, and only for signed-in,
+// active team members. Roles come from custom claims set by the backend — never from client data.
+// Media storage keys are relative logical keys; they reveal no filesystem path and no file is
+// downloadable without the backend.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function role() { return request.auth.token.role; }
+    function isMember() { return signedIn() && role() in ['admin', 'editor', 'viewer'] && request.auth.token.active == true; }
+    function isAdmin() { return isMember() && role() == 'admin'; }
+
+    // A user may read their own profile; admins may read all profiles. Nobody writes from the client.
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow write: if false;
+    }
+
+    // Library metadata: readable by team members (lets the UI subscribe to processing progress).
+    match /media/{mediaId} {
+      allow read: if isMember() && resource.data.deletedAt == null;
+      allow write: if false;
+    }
+    match /folders/{folderId} {
+      allow read: if isMember();
+      allow write: if false;
+    }
+    match /tags/{tagId} {
+      allow read: if isMember();
+      allow write: if false;
+    }
+    match /processingJobs/{jobId} {
+      allow read: if isMember();
+      allow write: if false;
+    }
+
+    // Duplicate-detection index (document ID = SHA-256 of the file). Backend only.
+    match /mediaChecksums/{checksum} {
+      allow read, write: if false;
+    }
+    // Audit trail and backup history: admins may read, nobody writes from the client.
+    match /activityLogs/{activityId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+    match /backups/{backupId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+    match /settings/{settingId} {
+      allow read: if isMember();
+      allow write: if false;
+    }
+
+    // Everything else is closed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

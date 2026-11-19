@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contentDisposition, parseRange } from "../../src/server/range";
+import { contentDisposition, parseRange } from "@tmh/shared/http-range";
 
 describe("HTTP range parsing (video seeking / resumable downloads)", () => {
   it("handles normal, open-ended and suffix ranges", () => {

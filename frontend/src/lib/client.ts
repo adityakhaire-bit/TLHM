@@ -1,5 +1,20 @@
-// Browser-side helpers: API calls, formatting and shared types. No server imports here.
+// Browser-side API client, formatting helpers and the types the current screens use.
+// No server imports here. All backend calls go through `api()` / `apiUrl()`.
+import type { ApiResponse } from "@tmh/shared/api-types";
 
+/**
+ * Base URL of the backend API. Empty = same origin (the legacy Next.js API routes).
+ * Phase 2 points this at the Express backend, e.g. NEXT_PUBLIC_API_BASE_URL=http://localhost:4000
+ */
+export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, "");
+
+/** Absolute URL for a backend path such as "/api/media". */
+export function apiUrl(path: string): string {
+  return path.startsWith("/api/") ? `${API_BASE_URL}${path}` : path;
+}
+
+// Legacy (MySQL) response types used by the current screens. Phase 2 replaces them with the
+// shared Firestore contract in @tmh/shared/api-types (string IDs, signed media URLs).
 export type MediaItem = {
   id: string;
   title: string;
@@ -50,13 +65,14 @@ export class ApiRequestError extends Error {
 /** fetch wrapper for our JSON API: returns `data` or throws ApiRequestError with the server's message. */
 export async function api<T>(url: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, ...rest } = init ?? {};
-  const response = await fetch(url, {
+  const response = await fetch(apiUrl(url), {
     cache: "no-store",
+    credentials: API_BASE_URL ? "include" : "same-origin",
     ...rest,
     headers: { ...(json !== undefined ? { "Content-Type": "application/json" } : {}), ...(rest.headers ?? {}) },
     body: json !== undefined ? JSON.stringify(json) : rest.body,
   });
-  let payload: { ok?: boolean; data?: T; error?: { message?: string; code?: string } } = {};
+  let payload: Partial<ApiResponse<T>> & { data?: T; error?: { message?: string; code?: string } } = {};
   try { payload = await response.json(); } catch { /* non-JSON error page */ }
   if (response.status === 401 && typeof window !== "undefined" && !url.startsWith("/api/auth/login")) {
     window.location.href = "/login";

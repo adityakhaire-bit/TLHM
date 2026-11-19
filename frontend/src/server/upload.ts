@@ -6,7 +6,7 @@ import { prisma } from "./db";
 import { getEnv } from "./env";
 import { ApiError } from "./http";
 import { mediaInclude, setMediaTags } from "./media";
-import { detectFileType, sanitizeDisplayFilename, SNIFF_BYTES, titleFromFilename } from "./media-types";
+import { detectFileType, sanitizeDisplayFilename, SNIFF_BYTES, titleFromFilename } from "@tmh/shared/media-types";
 import { assertFreeSpace, formatBytes, moveNoOverwrite, removeQuietly, requireStorage } from "./storage";
 
 export type UploadInput = {
@@ -76,7 +76,10 @@ export async function handleUpload(input: UploadInput): Promise<UploadResult> {
     out.end();
     await once(out, "finish");
   } catch (error) {
+    // Wait for the stream to close before deleting, or a still-opening file could reappear afterwards.
+    const closed = once(out, "close").catch(() => {});
     out.destroy();
+    await closed;
     await reader.cancel().catch(() => {});
     await removeQuietly(tempPath);
     if (error instanceof ApiError) throw error;

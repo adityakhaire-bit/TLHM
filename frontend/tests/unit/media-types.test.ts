@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectFileType, sanitizeDisplayFilename, titleFromFilename } from "../../src/server/media-types";
+import { detectFileType, sanitizeDisplayFilename, titleFromFilename } from "@tmh/shared/media-types";
 
 const bytes = (...parts: (string | number[])[]) => {
   const out: number[] = [];

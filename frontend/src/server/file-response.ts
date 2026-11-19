@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { ApiError } from "./http";
-import { contentDisposition, parseRange } from "./range";
+import { contentDisposition, parseRange } from "@tmh/shared/http-range";
 import { requireStorage, resolveStoragePath } from "./storage";
 
 type Options = {

@@ -2,6 +2,7 @@ node_modules/
 .next/
 out/
 build/
+dist/
 coverage/
 *.tsbuildinfo
 
@@ -9,12 +10,22 @@ coverage/
 .env*
 !.env.example
 
+# Firebase credentials and local tooling state: NEVER commit
+*service-account*.json
+*serviceAccount*.json
+*-firebase-adminsdk-*.json
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
 # Local media storage and backups never go into git
 storage/
 backups/
 
+# Generated Prisma client (legacy MySQL layer; rebuilt by `npm install`)
+frontend/src/generated/
+src/generated/
+
 *.log
 .DS_Store
-
-# Generated Prisma client (rebuilt by `npm install` / `npm run build`)
-src/generated/
