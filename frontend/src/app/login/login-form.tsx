@@ -2,11 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { api, errorMessage } from "@/lib/client";
-import {
-  emailErrorMessage, firebaseConfigured, googleErrorMessage, resendVerificationEmail, sendPasswordReset,
-  signInWithEmail, signInWithGoogle, signUpWithEmail,
-} from "@/lib/firebase-client";
+import { api, ApiRequestError, errorMessage } from "@/lib/client";
+import { firebaseConfigured, googleErrorMessage, signInWithGoogle } from "@/lib/firebase-client";
 
 type Mode = "signin" | "signup" | "reset";
 type Notice = { kind: "error" | "info" | "success"; text: string } | null;
@@ -43,16 +40,18 @@ export function LoginForm({ googleDomains }: { googleDomains: string[] }) {
     window.location.href = "/";
   }
 
+  // Email flows go through our server (/api/auth/email/*), which talks to Firebase. The browser never
+  // contacts Google here, so it also works on computers whose network or antivirus blocks Google APIs.
   async function emailSignIn(event: FormEvent) {
     event.preventDefault();
     if (!allowed(email)) { setNotice({ kind: "error", text: `Use your ${domainText} email address.` }); return; }
     setBusy("email"); setNotice(null); setUnverified(false);
     try {
-      await finishWithToken(await signInWithEmail(email.trim(), password));
+      await api("/api/auth/email/signin", { method: "POST", json: { email: email.trim(), password } });
+      window.location.href = "/";
     } catch (cause) {
-      const code = (cause as { code?: string })?.code ?? "";
-      setUnverified(code === "tmh/email-not-verified");
-      setNotice({ kind: "error", text: code.startsWith("auth/") || code.startsWith("tmh/") ? emailErrorMessage(cause) : errorMessage(cause, "Sign-in failed") });
+      setUnverified(cause instanceof ApiRequestError && cause.code === "email_not_verified");
+      setNotice({ kind: "error", text: errorMessage(cause, "Sign-in failed") });
       setBusy("");
     }
   }
@@ -67,21 +66,21 @@ export function LoginForm({ googleDomains }: { googleDomains: string[] }) {
     if (password !== confirm) { setNotice({ kind: "error", text: "The two passwords don't match." }); return; }
     setBusy("signup"); setNotice(null);
     try {
-      await signUpWithEmail(name, email.trim(), password);
+      await api("/api/auth/email/signup", { method: "POST", json: { name, email: email.trim(), password } });
       setMode("signin");
       setPassword("");
       setNotice({ kind: "success", text: `Account created. We sent a confirmation link to ${email.trim()}. Open it (check spam too), then sign in here.` });
     } catch (cause) {
-      setNotice({ kind: "error", text: emailErrorMessage(cause) });
+      setNotice({ kind: "error", text: errorMessage(cause, "Could not create the account") });
     } finally { setBusy(""); }
   }
 
   async function resend() {
     setBusy("resend");
     try {
-      await resendVerificationEmail(email.trim(), password);
+      await api("/api/auth/email/resend", { method: "POST", json: { email: email.trim(), password } });
       setNotice({ kind: "info", text: `Sent a new confirmation link to ${email.trim()}. Check spam too.` });
-    } catch (cause) { setNotice({ kind: "error", text: emailErrorMessage(cause) }); }
+    } catch (cause) { setNotice({ kind: "error", text: errorMessage(cause, "Could not send the link") }); }
     finally { setBusy(""); }
   }
 
@@ -90,11 +89,8 @@ export function LoginForm({ googleDomains }: { googleDomains: string[] }) {
     if (!allowed(email)) { setNotice({ kind: "error", text: `Enter your ${domainText} email address.` }); return; }
     setBusy("reset"); setNotice(null);
     try {
-      await sendPasswordReset(email.trim());
-    } catch (cause) {
-      const code = (cause as { code?: string })?.code ?? "";
-      if (code !== "auth/user-not-found") { setNotice({ kind: "error", text: emailErrorMessage(cause) }); setBusy(""); return; }
-    }
+      await api("/api/auth/email/reset", { method: "POST", json: { email: email.trim() } });
+    } catch (cause) { setNotice({ kind: "error", text: errorMessage(cause, "Could not send the reset link") }); setBusy(""); return; }
     // Same message whether or not the account exists, so the form cannot be used to probe for accounts.
     setNotice({ kind: "success", text: `If an account exists for ${email.trim()}, a password reset link is on its way. Check spam too.` });
     setBusy("");

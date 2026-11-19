@@ -12,14 +12,22 @@ const bodySchema = z.object({ idToken: z.string().min(100).max(8192) });
  * - An existing account with the same verified email is linked (for example one an admin prepared).
  * - Deactivated accounts are refused.
  */
-export async function firebaseSignIn(request: Request) {
+export function assertSameOriginPost(request: Request) {
   const origin = request.headers.get("origin");
   const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
   if (origin && host && new URL(origin).host !== host) throw new ApiError(403, "Cross-site request blocked", "bad_origin");
+}
 
+export async function firebaseSignIn(request: Request) {
+  assertSameOriginPost(request);
   const parsed = bodySchema.safeParse(await readJson(request));
   if (!parsed.success) throw new ApiError(400, "Missing sign-in token", "invalid_body");
-  const identity = await verifyFirebaseIdToken(parsed.data.idToken);
+  return sessionFromIdToken(parsed.data.idToken, request);
+}
+
+/** Verifies a Firebase ID token (verified email, allowed domain) and opens a TMH session for it. */
+export async function sessionFromIdToken(idToken: string, request: Request) {
+  const identity = await verifyFirebaseIdToken(idToken);
 
   let user = await prisma.user.findFirst({ where: { OR: [{ firebaseUid: identity.uid }, { email: identity.email }] } });
   if (user) {
