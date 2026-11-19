@@ -1,11 +1,11 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Activity, Archive, AudioLines, FolderTree, HardDrive, Image as ImageIcon, Search, Upload, Video } from "lucide-react";
+import { Activity, Archive, AudioLines, FolderTree, HardDrive, Image as ImageIcon, Search, Upload, Users, Video } from "lucide-react";
 import type { SessionUser } from "@/server/auth";
 import { SignOutButton } from "./sign-out-button";
 
-type NavKey = "overview" | "all" | "video" | "audio" | "image" | "folders" | "uploads" | "storage";
+type NavKey = "overview" | "all" | "video" | "audio" | "image" | "folders" | "uploads" | "storage" | "users";
 
 const workspaceLinks: { key: NavKey; label: string; icon: LucideIcon; href: string }[] = [
   { key: "overview", label: "Overview", icon: Activity, href: "/" },
@@ -18,6 +18,7 @@ const workspaceLinks: { key: NavKey; label: string; icon: LucideIcon; href: stri
 ];
 const manageLinks: { key: NavKey; label: string; icon: LucideIcon; href: string }[] = [
   { key: "storage", label: "Storage & backups", icon: HardDrive, href: "/storage" },
+  { key: "users", label: "Users & access", icon: Users, href: "/users" },
 ];
 
 /** Shared sidebar + header used by every signed-in page (same visual design as the original dashboard). */
@@ -35,7 +36,7 @@ export function AppShell({ user, active, crumb, query, children }: { user: Sessi
           <span><b className="block text-sm">Terence Media Hub</b><small className="text-xs text-slate-500">Creative library</small></span>
         </Link>
         <div className="mt-10"><p className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-[.12em] text-slate-400">Workspace</p><nav className="space-y-1">{workspaceLinks.map(link)}</nav></div>
-        <div className="mt-9"><p className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-[.12em] text-slate-400">Manage</p><nav className="space-y-1">{manageLinks.map(link)}</nav></div>
+        <div className="mt-9"><p className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-[.12em] text-slate-400">Manage</p><nav className="space-y-1">{manageLinks.filter((item) => item.key !== "users" || user.role === "admin").map(link)}</nav></div>
         <div className="absolute inset-x-5 bottom-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <p className="truncate text-xs font-semibold">{user.displayName || user.username}</p>
           <p className="mt-0.5 text-xs capitalize text-slate-500">{user.role}</p>
@@ -56,7 +57,7 @@ export function AppShell({ user, active, crumb, query, children }: { user: Sessi
         </header>
         {/* Compact navigation for phones and tablets (the sidebar is desktop-only). */}
         <nav className="flex gap-1 overflow-x-auto border-b border-[#e8ebef] bg-white px-3 py-2 lg:hidden">
-          {[...workspaceLinks, ...manageLinks].map((item) => (
+          {[...workspaceLinks, ...manageLinks].filter((item) => item.key !== "users" || user.role === "admin").map((item) => (
             <Link key={item.key} href={item.href} className={`shrink-0 rounded-md px-3 py-1.5 text-xs ${item.key === active ? "bg-slate-100 font-medium text-slate-900" : "text-slate-600"}`}>{item.label}</Link>
           ))}
         </nav>

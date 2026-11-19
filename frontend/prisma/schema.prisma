@@ -75,7 +75,12 @@ model User {
   id           Int       @id @default(autoincrement())
   username     String    @unique @db.VarChar(64)
   displayName  String    @default("") @map("display_name") @db.VarChar(120)
-  passwordHash String    @map("password_hash") @db.VarChar(255)
+  // Null for accounts that only sign in with Google.
+  passwordHash String?   @map("password_hash") @db.VarChar(255)
+  email        String?   @unique @db.VarChar(255)
+  // Firebase Authentication UID for Google sign-in.
+  firebaseUid  String?   @unique @map("firebase_uid") @db.VarChar(128)
+  avatarUrl    String?   @map("avatar_url") @db.VarChar(1024)
   role         Role      @default(viewer)
   isActive     Boolean   @default(true) @map("is_active")
   lastLoginAt  DateTime? @map("last_login_at")

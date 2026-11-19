@@ -17,6 +17,9 @@ const schema = z.object({
   SESSION_TTL_HOURS: z.coerce.number().int().positive().default(24 * 7),
   BACKUP_KEEP: z.coerce.number().int().min(2).default(30),
   CLOUD_STORAGE_ENABLED: z.enum(["true", "false"]).default("false"),
+  // Google sign-in (Firebase Authentication). Empty ALLOWED_EMAIL_DOMAINS = Google sign-in disabled.
+  FIREBASE_PROJECT_ID: z.string().optional(),
+  ALLOWED_EMAIL_DOMAINS: z.string().default(""),
 });
 
 export type ServerEnv = z.infer<typeof schema>;
