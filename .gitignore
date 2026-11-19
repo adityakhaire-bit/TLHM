@@ -20,8 +20,8 @@ firestore-debug.log
 ui-debug.log
 
 # Local media storage and backups never go into git
-storage/
-backups/
+/storage/
+/backups/
 
 # Generated Prisma client (legacy MySQL layer; rebuilt by `npm install`)
 frontend/src/generated/
