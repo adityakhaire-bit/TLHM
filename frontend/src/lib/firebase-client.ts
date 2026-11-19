@@ -42,6 +42,72 @@ export async function signInWithGoogle(hostedDomain?: string): Promise<string> {
   return token;
 }
 
+// ---------- Email + password (works on plain http:// office addresses too) ----------
+
+async function emailAuth() {
+  const app = await firebaseApp();
+  const mod = await import("firebase/auth");
+  const auth = mod.getAuth(app);
+  await mod.setPersistence(auth, mod.browserSessionPersistence);
+  return { auth, mod };
+}
+
+/** Where the verification / reset email link sends people back to (this same site's login page). */
+const returnUrl = (query: string) => `${window.location.origin}/login?${query}`;
+
+/**
+ * Creates the Firebase account and emails a verification link. The person can sign in only after
+ * clicking it (the server refuses unverified emails), which proves they own the mailbox.
+ */
+export async function signUpWithEmail(name: string, email: string, password: string) {
+  const { auth, mod } = await emailAuth();
+  const { user } = await mod.createUserWithEmailAndPassword(auth, email, password);
+  if (name.trim()) await mod.updateProfile(user, { displayName: name.trim() }).catch(() => {});
+  await mod.sendEmailVerification(user, { url: returnUrl("verified=1") });
+  await mod.signOut(auth).catch(() => {});
+}
+
+/** Signs in with email + password and returns a fresh ID token for our server. */
+export async function signInWithEmail(email: string, password: string): Promise<string> {
+  const { auth, mod } = await emailAuth();
+  const { user } = await mod.signInWithEmailAndPassword(auth, email, password);
+  if (!user.emailVerified) {
+    await mod.signOut(auth).catch(() => {});
+    throw Object.assign(new Error("not verified"), { code: "tmh/email-not-verified" });
+  }
+  const token = await user.getIdToken(true);
+  await mod.signOut(auth).catch(() => {});
+  return token;
+}
+
+/** Sends the verification email again (needs the password, because Firebase requires a signed-in user). */
+export async function resendVerificationEmail(email: string, password: string) {
+  const { auth, mod } = await emailAuth();
+  const { user } = await mod.signInWithEmailAndPassword(auth, email, password);
+  if (!user.emailVerified) await mod.sendEmailVerification(user, { url: returnUrl("verified=1") });
+  await mod.signOut(auth).catch(() => {});
+}
+
+export async function sendPasswordReset(email: string) {
+  const { auth, mod } = await emailAuth();
+  await mod.sendPasswordResetEmail(auth, email, { url: returnUrl("reset=1") });
+}
+
+/** Friendly text for email/password errors. */
+export function emailErrorMessage(error: unknown): string {
+  const code = (error as { code?: string })?.code ?? "";
+  if (code === "auth/email-already-in-use") return "An account with this email already exists. Sign in instead, or use “Forgot password?”.";
+  if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") return "Incorrect email or password.";
+  if (code === "auth/invalid-email") return "That email address doesn't look right.";
+  if (code === "auth/weak-password" || code === "auth/password-does-not-meet-requirements") return "Choose a stronger password (at least 10 characters).";
+  if (code === "auth/too-many-requests") return "Too many attempts. Wait a few minutes and try again.";
+  if (code === "auth/operation-not-allowed") return "Email sign-in is not enabled in Firebase yet (Authentication → Sign-in method → Email/Password).";
+  if (code === "auth/network-request-failed") return "No internet connection. Admins can still use the username sign-in below.";
+  if (code === "auth/unauthorized-continue-uri" || code === "auth/invalid-continue-uri") return "This address is not authorised in Firebase (Authentication → Settings → Authorized domains).";
+  if (code === "tmh/email-not-verified") return "Please confirm your email first: open the verification link we sent you, then sign in.";
+  return error instanceof Error ? error.message : "Something went wrong.";
+}
+
 /** Friendly text for common Firebase sign-in errors. */
 export function googleErrorMessage(error: unknown): string {
   const code = (error as { code?: string })?.code ?? "";

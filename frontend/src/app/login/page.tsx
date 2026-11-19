@@ -14,7 +14,7 @@ export default async function Login() {
         <h1 className="mt-6 text-xl font-semibold">Sign in to Media Hub</h1>
         <p className="mt-1 text-sm text-slate-500">Use your company account to access the creative library.</p>
         <LoginForm googleDomains={allowedDomains()} />
-        <p className="mt-5 text-xs leading-5 text-slate-500">Team members sign in with their company Google account. Other accounts are created by an administrator.</p>
+        <p className="mt-5 text-xs leading-5 text-slate-500">Team members sign in or create an account with their company email. New accounts start with view-only access.</p>
       </section>
     </main>
   );
