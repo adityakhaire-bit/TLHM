@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Prisma } from "@/generated/prisma/client";
 import { canonical, clean } from "./ai-vocabulary";
 import { prisma } from "./db";
 import { getEnv } from "./env";
@@ -8,9 +9,11 @@ import { makeAnalysisClip } from "./ffmpeg";
 import { checkStorage, removeQuietly, resolveStoragePath } from "./storage";
 
 /** Bump when the prompt or the stored structure changes, so old analyses can be found and redone. */
-export const PIPELINE_VERSION = 2;
+export const PIPELINE_VERSION = 3;
 
 const SHOT_TYPES = ["extreme close-up", "close-up", "medium close-up", "medium shot", "full-body shot", "wide shot", "over-the-shoulder", "aerial", "other"];
+/** Clip categories used to auto-sort the library (stored in media_files.category when it is empty). */
+export const CATEGORIES = ["dance", "fitness", "interview", "talk", "tutorial", "performance", "behind the scenes", "event", "promo", "vlog", "other"];
 const BODY_REGIONS = ["upper", "lower", "full", "feet", "head", "accessory"];
 
 const S = (description?: string) => ({ type: "STRING", ...(description ? { description } : {}) });
@@ -26,6 +29,7 @@ export const RESPONSE_SCHEMA = O({
   language: S("main spoken language, or 'none'"),
   has_speech: B(),
   has_music: B(),
+  category: { type: "STRING", enum: CATEGORIES },
   indoor_outdoor: { type: "STRING", enum: ["indoor", "outdoor", "mixed", "unknown"] },
   setting: S("main location, e.g. dance studio, stage, gym, podcast studio, office, home, street"),
   people_count: { type: "INTEGER" },
@@ -43,9 +47,10 @@ export const RESPONSE_SCHEMA = O({
       label: S(),
       position: S("left, centre, right, foreground, background"),
       is_speaking: B(),
+      pose: S("body pose: standing, sitting, kneeling, lying down, crouching, jumping, mid-air, leaning, arms raised, arms crossed, hands on hips, walking"),
       actions: A(S("-ing verb, e.g. talking, dancing, teaching, sitting, smiling, pointing")),
       clothing: A(O({ item: S("e.g. t-shirt, shirt, jacket, jeans, trousers, sneakers, cap, microphone"), color: S("simple colour name"), pattern: S("plain, striped, checked, printed, logo"), body_region: { type: "STRING", enum: BODY_REGIONS } }, ["item", "color", "body_region"])),
-    }, ["label", "actions", "clothing"])),
+    }, ["label", "pose", "actions", "clothing"])),
     objects: A(S("notable objects / props / furniture")),
   }, ["start_s", "end_s", "description", "shot_type", "people"])),
   transcript: A(O({ start_s: N(), end_s: N(), speaker: S(), text: S() }, ["start_s", "end_s", "text"])),
@@ -70,6 +75,7 @@ export const analysisSchema = z.object({
   language: str,
   has_speech: bool,
   has_music: bool,
+  category: str,
   indoor_outdoor: str,
   setting: str,
   people_count: z.preprocess((value) => (typeof value === "number" ? Math.round(value) : null), z.number().nullable()),
@@ -87,6 +93,7 @@ export const analysisSchema = z.object({
       label: str,
       position: str,
       is_speaking: bool,
+      pose: str,
       actions: list(str),
       clothing: list(z.object({ item: str, color: str, pattern: str, body_region: str })),
     })),
@@ -113,6 +120,8 @@ Rules:
 - Segments must cover the whole video in order, without gaps, from 0 to ${seconds} seconds. Start a new segment at every camera cut, scene change, clothing change, location change or clear change of main action or topic. ${compact ? "Keep segments between 10 and 60 seconds." : "Keep segments between 2 and 20 seconds; split long continuous shots into 10-20 second segments by what happens in them."} Return AT LEAST ${minimum} segments.${stricter ? ` Your previous answer had far too few segments: editors need to find exact moments, so describe the video in at least ${minimum} consecutive time ranges.` : ""}
 - Times are numbers of seconds from the start of the video (e.g. 75.5), never later than ${seconds}.
 - For every visible person in every segment, list ALL clothing items with simple colour names (black, white, grey, blue, red, green, yellow, orange, pink, purple, brown, beige, gold, silver, multicolour), plus accessories (microphone, cap, glasses, watch, jewellery) and footwear if visible.
+- For every visible person in every segment, give their body pose (standing, sitting, kneeling, lying down, crouching, jumping, mid-air, leaning, arms raised, arms crossed, hands on hips, walking).
+- Category: the single best fit for the whole clip (dance, fitness, interview, talk, tutorial, performance, behind the scenes, event, promo, vlog, other).
 - Actions are -ing verbs (talking, dancing, teaching, demonstrating exercise, walking, sitting, standing, smiling, laughing, pointing, gesturing, interacting). Mark is_speaking only when the person's lips move with the speech.
 - Label people person_1, person_2... and keep the same label for the same person across all segments. Do NOT identify anyone from their face. Use a real name only if it is spoken in the audio or written on screen, and then also mention it in the person's description.
 - Describe only what is visible or audible. If unsure, leave a field empty rather than guessing.
@@ -148,6 +157,8 @@ export function normalizeAnalysis(json: AnalysisJson, durationSeconds: number | 
       for (const person of segment.people) {
         const label = personLabel(person.label) || null;
         if (label) attributes.push({ category: "person", value: label, color: null, pattern: null, bodyRegion: null, personLabel: label });
+        const pose = canonical(person.pose, 40);
+        if (pose) attributes.push({ category: "pose", value: pose, color: null, pattern: null, bodyRegion: null, personLabel: label });
         if (person.is_speaking) attributes.push({ category: "action", value: "talking", color: null, pattern: null, bodyRegion: null, personLabel: label });
         for (const action of person.actions) {
           const value = canonical(action);
@@ -205,6 +216,21 @@ export function normalizeAnalysis(json: AnalysisJson, durationSeconds: number | 
     .sort((a, b) => a.startMs - b.startMs);
 
   const tags = [...new Set(json.tags.map((tag) => clean(tag, 64)).filter(Boolean))].slice(0, 20);
+  const category = CATEGORIES.includes(clean(json.category)) && clean(json.category) !== "other" ? clean(json.category) : null;
+  // Auto-tags for the clip: most frequent clothing, poses, actions, shots and setting, plus the AI keywords.
+  const top = (cat: string, n: number) => {
+    const counts = new Map<string, number>();
+    for (const segment of segments) for (const attribute of segment.attributes) {
+      if (attribute.category !== cat) continue;
+      const name = [attribute.color, attribute.value].filter(Boolean).join(" ");
+      counts.set(name, (counts.get(name) ?? 0) + (segment.endMs - segment.startMs));
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([name]) => name);
+  };
+  const autoTags = [...new Set([
+    ...(category ? [category] : []), ...top("clothing", 6), ...top("accessory", 2), ...top("pose", 4), ...top("action", 5),
+    ...top("shot", 3), ...top("setting", 2), ...tags,
+  ].map((tag) => tag.slice(0, 64)).filter(Boolean))].slice(0, 30);
   const topics = [...new Set(json.topics.map((topic) => clean(topic, 80)).filter(Boolean))].slice(0, 20);
   const people = json.people.map((person) => ({ label: personLabel(person.label), description: person.description.trim().slice(0, 500) })).filter((person) => person.label);
   const searchText = [
@@ -222,7 +248,7 @@ export function normalizeAnalysis(json: AnalysisJson, durationSeconds: number | 
     indoorOutdoor: clean(json.indoor_outdoor, 16) || null,
     setting: canonical(json.setting) || null,
     peopleCount: json.people_count ?? (people.length || null),
-    tags, topics, people, segments, transcript, searchText,
+    tags, topics, people, segments, transcript, searchText, category, autoTags,
   };
 }
 
@@ -337,6 +363,11 @@ export async function analyzeMedia(mediaId: string, log: (message: string) => vo
       if (rows.transcript.length) {
         await tx.transcriptLine.createMany({ data: rows.transcript.map((line) => ({ ...line, analysisId: analysis.id, mediaId: media.id })) });
       }
+      await setAiTags(tx, media.id, rows.autoTags);
+      // Auto-sort: fill the category only when nobody has set one.
+      if (rows.category && !media.category) {
+        await tx.mediaFile.update({ where: { id: media.id }, data: { category: rows.category.replace(/\b\w/g, (c) => c.toUpperCase()) } });
+      }
     }, { timeout: 120_000, maxWait: 30_000 });
 
     const summary = `${rows.segments.length} segments, ${rows.transcript.length} transcript lines, ${result.inputTokens}+${result.outputTokens} tokens with ${result.model} in ${Math.round(elapsedMs / 1000)}s`;
@@ -344,6 +375,16 @@ export async function analyzeMedia(mediaId: string, log: (message: string) => vo
     return summary;
   } finally {
     await deleteFile(file.name); // never leave our footage on Google's servers longer than needed
+  }
+}
+
+/** Replaces the AI-added tags of a clip. Tags people added themselves are never touched. */
+export async function setAiTags(tx: Prisma.TransactionClient, mediaId: string, names: string[]) {
+  await tx.mediaTag.deleteMany({ where: { mediaId, source: "ai" } });
+  for (const name of names) {
+    const tag = await tx.tag.upsert({ where: { name }, create: { name }, update: {} });
+    const existing = await tx.mediaTag.findUnique({ where: { mediaId_tagId: { mediaId, tagId: tag.id } } });
+    if (!existing) await tx.mediaTag.create({ data: { mediaId, tagId: tag.id, source: "ai" } });
   }
 }
 

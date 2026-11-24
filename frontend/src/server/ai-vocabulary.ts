@@ -49,6 +49,16 @@ const SYNONYMS: Record<string, string[]> = {
   exercising: ["workout", "working out", "exercise", "fitness", "demonstrating exercise", "demonstrating an exercise"],
   pointing: ["point", "points"],
   gesturing: ["gesture", "gestures", "hand gestures"],
+  // poses
+  "arms raised": ["hands raised", "hands up", "arms up", "raised arms", "arms in the air"],
+  "arms crossed": ["folded arms", "arms folded", "crossed arms"],
+  "hands on hips": ["hands on waist"],
+  "lying down": ["lying", "laying down", "reclining"],
+  kneeling: ["on knees", "kneel"],
+  crouching: ["squatting", "crouch", "squat"],
+  jumping: ["jump", "jumps", "leaping", "leap"],
+  "mid-air": ["in the air", "airborne"],
+  leaning: ["lean", "leans"],
   // shots and settings
   "close-up": ["closeup", "close up", "tight shot"],
   "extreme close-up": ["extreme closeup", "ecu"],

@@ -21,13 +21,22 @@ export const searchSchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(24),
 });
 
-export type SearchParams = z.infer<typeof searchSchema>;
+/** AI filter, "category|value|color", e.g. "clothing|t-shirt|black", "pose|sitting|", "clothing||black" (any black clothing). */
+export type AttrFilter = { category: string; value: string | null; color: string | null };
+export type SearchParams = z.infer<typeof searchSchema> & { attrs?: AttrFilter[] };
+
+export function parseAttr(raw: string): AttrFilter | null {
+  const [category = "", value = "", color = ""] = raw.toLowerCase().split("|").map((part) => part.trim().slice(0, 120));
+  if (!/^[a-z]{2,24}$/.test(category) || (!value && !color)) return null;
+  return { category, value: value || null, color: color || null };
+}
 
 export function parseSearchParams(url: URL): SearchParams {
-  const raw = Object.fromEntries([...url.searchParams.entries()].filter(([, value]) => value !== ""));
+  const raw = Object.fromEntries([...url.searchParams.entries()].filter(([key, value]) => value !== "" && key !== "attr"));
   const parsed = searchSchema.safeParse(raw);
   if (!parsed.success) throw new ApiError(400, "Invalid search filters", "invalid_query", z.flattenError(parsed.error).fieldErrors);
-  return parsed.data;
+  const attrs = url.searchParams.getAll("attr").slice(0, 10).map(parseAttr).filter((attr): attr is AttrFilter => attr !== null);
+  return { ...parsed.data, attrs };
 }
 
 /**
@@ -75,6 +84,10 @@ export function buildMediaWhere(params: SearchParams): Prisma.MediaFileWhereInpu
         ],
       });
     }
+  }
+  // AI filters: the clip must contain each selected attribute somewhere.
+  for (const attr of params.attrs ?? []) {
+    and.push({ analysis: { is: { attributes: { some: { category: attr.category, ...(attr.value ? { value: attr.value } : {}), ...(attr.color ? { color: attr.color } : {}) } } } } });
   }
   if (params.type) and.push({ mediaType: params.type });
   if (params.status === "completed") and.push({ processingStatus: "ready" });

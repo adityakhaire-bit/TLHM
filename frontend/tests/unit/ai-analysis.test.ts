@@ -75,3 +75,33 @@ describe("normalizeAnalysis", () => {
     expect(() => parseModelJson('{"summary":"x","segments":[{"start_s":0')).toThrow(/cut off/);
   });
 });
+
+describe("auto-sort and auto-tags", () => {
+  it("stores pose, a category and frequency-ordered auto-tags", () => {
+    const json = structuredClone(sample) as typeof sample & { category: string };
+    json.category = "Fitness";
+    (json.segments[0].people[0] as Record<string, unknown>).pose = "hands up";
+    const rows = normalizeAnalysis(parseModelJson(JSON.stringify(json)), 18);
+    expect(rows.category).toBe("fitness");
+    expect(rows.segments[1].attributes).toContainEqual(expect.objectContaining({ category: "pose", value: "arms raised" }));
+    expect(rows.autoTags.slice(0, 3)).toEqual(["fitness", "black t-shirt", "black microphone"]);
+    expect(rows.autoTags).toContain("arms raised");
+    expect(rows.autoTags).toContain("dance studio");
+  });
+
+  it("ignores unknown or 'other' categories", () => {
+    const json = { ...sample, category: "documentary" };
+    expect(normalizeAnalysis(parseModelJson(JSON.stringify(json)), 18).category).toBeNull();
+  });
+});
+
+describe("AI filters", () => {
+  it("parses attr filters and rejects junk", async () => {
+    const { parseAttr } = await import("@/server/search");
+    expect(parseAttr("clothing|t-shirt|black")).toEqual({ category: "clothing", value: "t-shirt", color: "black" });
+    expect(parseAttr("Clothing||Black")).toEqual({ category: "clothing", value: null, color: "black" });
+    expect(parseAttr("pose|sitting|")).toEqual({ category: "pose", value: "sitting", color: null });
+    expect(parseAttr("pose||")).toBeNull();
+    expect(parseAttr("drop table|x|")).toBeNull();
+  });
+});

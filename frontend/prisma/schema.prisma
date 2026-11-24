@@ -192,6 +192,8 @@ model Tag {
 model MediaTag {
   mediaId String @map("media_id") @db.Char(36)
   tagId   Int    @map("tag_id")
+  // "user" = added by a person; "ai" = added automatically from AI analysis (replaced on re-analysis).
+  source  String @default("user") @db.VarChar(8)
 
   media MediaFile @relation(fields: [mediaId], references: [id], onDelete: Cascade)
   tag   Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)

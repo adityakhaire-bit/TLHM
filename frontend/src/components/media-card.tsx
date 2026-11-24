@@ -35,13 +35,16 @@ export function MediaCard({ item, onOpen }: { item: MediaItem; onOpen: (item: Me
           <span>{formatBytes(item.fileSize)}</span>
           <span>{formatDate(item.createdAt)}</span>
         </div>
-        {(item.category || item.tags.length > 0) && (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {item.category && <span className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">{item.category}</span>}
-            {item.tags.slice(0, 3).map((tag) => <span key={tag} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600">#{tag}</span>)}
-            {item.tags.length > 3 && <span className="text-[10px] text-slate-400">+{item.tags.length - 3}</span>}
-          </div>
-        )}
+        {(item.category || item.tags.length > 0 || item.aiTags.length > 0) && (() => {
+          const shown = [...item.tags.map((tag) => ({ tag, ai: false })), ...item.aiTags.filter((tag) => tag !== item.category?.toLowerCase()).map((tag) => ({ tag, ai: true }))];
+          return (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {item.category && <span className="rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">{item.category}</span>}
+              {shown.slice(0, 4).map(({ tag, ai }) => <span key={tag} title={ai ? "Added by AI" : undefined} className={`rounded-md px-1.5 py-0.5 text-[10px] ${ai ? "bg-violet-50/60 text-violet-700" : "bg-slate-100 text-slate-600"}`}>#{tag}</span>)}
+              {shown.length > 4 && <span className="text-[10px] text-slate-400">+{shown.length - 4}</span>}
+            </div>
+          );
+        })()}
       </div>
     </button>
   );

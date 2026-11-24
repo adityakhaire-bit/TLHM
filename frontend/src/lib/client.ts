@@ -33,6 +33,7 @@ export type MediaItem = {
   description: string | null;
   folder: { id: number; name: string } | null;
   tags: string[];
+  aiTags: string[];
   uploadedBy: string | null;
   processingStatus: "pending" | "processing" | "ready" | "failed";
   uploadStatus: string;

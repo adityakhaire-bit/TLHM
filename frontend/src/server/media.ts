@@ -4,7 +4,7 @@ import { prisma } from "./db";
 
 export const mediaInclude = {
   folder: { select: { id: true, name: true } },
-  tags: { select: { tag: { select: { id: true, name: true } } } },
+  tags: { select: { source: true, tag: { select: { id: true, name: true } } } },
   uploadedBy: { select: { id: true, username: true, displayName: true } },
   jobs: {
     select: { id: true, jobType: true, status: true, progress: true, errorMessage: true, startedAt: true, completedAt: true },
@@ -34,7 +34,9 @@ export function serializeMedia(media: MediaWithRelations) {
     category: media.category,
     description: media.description,
     folder: media.folder,
-    tags: media.tags.map((entry) => entry.tag.name).sort(),
+    tags: media.tags.filter((entry) => entry.source !== "ai").map((entry) => entry.tag.name).sort(),
+    // Added automatically from AI analysis (clothing, colours, poses, actions, setting, keywords).
+    aiTags: media.tags.filter((entry) => entry.source === "ai").map((entry) => entry.tag.name),
     uploadedBy: media.uploadedBy ? media.uploadedBy.displayName || media.uploadedBy.username : null,
     processingStatus: media.processingStatus,
     uploadStatus: media.uploadStatus,
@@ -88,9 +90,10 @@ export function normalizeTags(tags: string[]): string[] {
 /** Replaces the tags on a media item, creating tag rows as needed. */
 export async function setMediaTags(tx: Prisma.TransactionClient, mediaId: string, tags: string[]) {
   const names = normalizeTags(tags);
-  await tx.mediaTag.deleteMany({ where: { mediaId } });
+  await tx.mediaTag.deleteMany({ where: { mediaId, source: "user" } }); // AI tags are managed by the analysis
   for (const name of names) {
     const tag = await tx.tag.upsert({ where: { name }, create: { name }, update: {} });
-    await tx.mediaTag.create({ data: { mediaId, tagId: tag.id } });
+    // A tag the AI already added becomes the person's own tag.
+    await tx.mediaTag.upsert({ where: { mediaId_tagId: { mediaId, tagId: tag.id } }, create: { mediaId, tagId: tag.id }, update: { source: "user" } });
   }
 }

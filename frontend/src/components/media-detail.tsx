@@ -171,6 +171,7 @@ export function MediaDetail({ item: initial, folders, role, onClose, onChanged, 
                   </label>
                 </div>
                 <Input label="Tags (comma separated)" value={tags} onChange={setTags} placeholder="workout, terence, interview" />
+                {item.aiTags.length > 0 && <p className="-mt-1 text-[11px] leading-5 text-violet-700">Auto-tags from AI: {item.aiTags.map((tag) => `#${tag}`).join(" ")}</p>}
                 <label className="block text-xs font-medium text-slate-700">Description
                   <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} maxLength={5000} className="mt-1 w-full resize-y rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-normal outline-none focus:border-slate-400" />
                 </label>
@@ -184,6 +185,7 @@ export function MediaDetail({ item: initial, folders, role, onClose, onChanged, 
               <div className="space-y-2 border-t border-slate-100 pt-4 text-xs text-slate-600">
                 {item.category && <p>Category: <b>{item.category}</b></p>}
                 {item.tags.length > 0 && <p>Tags: {item.tags.map((tag) => `#${tag}`).join(" ")}</p>}
+                {item.aiTags.length > 0 && <p className="text-violet-700">Auto-tags: {item.aiTags.map((tag) => `#${tag}`).join(" ")}</p>}
                 {item.description && <p className="whitespace-pre-wrap">{item.description}</p>}
               </div>
             )}

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { Archive, ChevronLeft, ChevronRight, Play, Search, Sparkles, Upload } from "lucide-react";
+import { Archive, ChevronDown, ChevronLeft, ChevronRight, Play, Search, Sparkles, Upload, X } from "lucide-react";
 import { api, errorMessage, folderOptions, type FolderItem, type MediaItem, type MediaPage } from "@/lib/client";
 import { MediaCard } from "./media-card";
 import { timecode } from "./media-ai-panel";
@@ -10,6 +10,7 @@ import { MediaDetail } from "./media-detail";
 
 type Moment = { segmentId: number; mediaId: string; title: string; filename: string; thumbnail: string | null; startMs: number; endMs: number; description: string; shotType: string | null; matched: string[] };
 type MomentResults = { moments: Moment[]; ignored: string[]; total: number };
+type FacetGroup = { id: string; title: string; facets: { key: string; label: string; count: number }[] };
 
 const FILTERS = [
   { key: "all", label: "All media", params: {} },
@@ -41,6 +42,10 @@ export function LibraryBrowser({ role, initialQuery }: { role: "admin" | "editor
   const [folder, setFolder] = useState(initialParams.get("folder") ?? "");
   const [sort, setSort] = useState(initialParams.get("sort") ?? "newest");
   const [page, setPage] = useState(Number(initialParams.get("page") ?? 1) || 1);
+  const [attrs, setAttrs] = useState<string[]>(initialParams.getAll("attr"));
+  const [category, setCategory] = useState(initialParams.get("category") ?? "");
+  const [facets, setFacets] = useState<FacetGroup[]>([]);
+  const [browseOpen, setBrowseOpen] = useState(initialParams.getAll("attr").length > 0 || Boolean(initialParams.get("category")));
   const [data, setData] = useState<MediaPage | null>(null);
   const [folders, setFolders] = useState<FolderItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,10 +60,12 @@ export function LibraryBrowser({ role, initialQuery }: { role: "admin" | "editor
     if (submittedQuery.trim()) params.set("q", submittedQuery.trim());
     for (const [key, value] of Object.entries((FILTERS.find((item) => item.key === filter)?.params ?? {}) as Record<string, string>)) params.set(key, value);
     if (folder) params.set("folder", folder);
+    if (category) params.set("category", category);
+    for (const attr of attrs) params.append("attr", attr);
     if (sort !== "newest") params.set("sort", sort);
     if (page > 1) params.set("page", String(page));
     return params.toString();
-  }, [submittedQuery, filter, folder, sort, page]);
+  }, [submittedQuery, filter, folder, sort, page, attrs, category]);
 
   const load = useCallback(async (quiet = false) => {
     const id = ++requestId.current;
@@ -96,6 +103,19 @@ export function LibraryBrowser({ role, initialQuery }: { role: "admin" | "editor
       setOpenAt(moment.startMs); setOpen(result.media);
     } catch (cause) { setError(errorMessage(cause, "Could not open this video")); }
   }
+
+  // "Browse by AI" options; refreshed when processing finishes so new clips' tags appear.
+  useEffect(() => {
+    api<{ groups: FacetGroup[] }>("/api/media/facets").then((result) => setFacets(result.groups)).catch(() => {});
+  }, [data?.processingCount, data?.total]);
+
+  function toggleFacet(key: string) {
+    setPage(1);
+    if (key.startsWith("category:")) { const value = key.slice(9); setCategory((current) => current === value ? "" : value); return; }
+    setAttrs((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]);
+  }
+  const activeKeys = new Set([...attrs, ...(category ? [`category:${category}`] : [])]);
+  const facetLabel = (key: string) => key.startsWith("category:") ? key.slice(9) : key.split("|").slice(1).reverse().filter(Boolean).join(" ");
 
   useEffect(() => { api<{ folders: FolderItem[] }>("/api/folders").then((result) => setFolders(result.folders)).catch(() => {}); }, []);
 
@@ -148,6 +168,40 @@ export function LibraryBrowser({ role, initialQuery }: { role: "admin" | "editor
         ))}
       </div>
 
+      {facets.length > 0 && (
+        <section className="mt-3 rounded-xl border border-[#e8ebef] bg-white" aria-label="Browse by AI">
+          <button type="button" onClick={() => setBrowseOpen(!browseOpen)} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
+            <span className="inline-flex items-center gap-2 text-sm font-semibold"><Sparkles size={15} className="text-violet-600" />Browse by AI <span className="font-normal text-slate-500">clothing, colour, pose, action, shot, setting</span></span>
+            <ChevronDown size={16} className={`text-slate-400 transition ${browseOpen ? "rotate-180" : ""}`} />
+          </button>
+          {activeKeys.size > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 px-4 pb-3">
+              {[...activeKeys].map((key) => (
+                <button key={key} type="button" onClick={() => toggleFacet(key)} className="inline-flex items-center gap-1 rounded-full bg-[#182230] px-2.5 py-1 text-[11px] font-medium text-white">{facetLabel(key)}<X size={11} /></button>
+              ))}
+              <button type="button" onClick={() => { setAttrs([]); setCategory(""); setPage(1); }} className="text-[11px] text-slate-500 underline">Clear</button>
+            </div>
+          )}
+          {browseOpen && (
+            <div className="grid gap-4 border-t border-slate-100 px-4 py-3 sm:grid-cols-2 xl:grid-cols-4">
+              {facets.map((group) => (
+                <div key={group.id}>
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{group.title}</p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {group.facets.map((facet) => (
+                      <button key={facet.key} type="button" onClick={() => toggleFacet(facet.key)}
+                        className={`rounded-full border px-2.5 py-1 text-[11px] capitalize ${activeKeys.has(facet.key) ? "border-[#182230] bg-[#182230] text-white" : "border-slate-200 text-slate-700 hover:border-slate-300"}`}>
+                        {facet.label} <span className={activeKeys.has(facet.key) ? "text-slate-300" : "text-slate-400"}>{facet.count}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       <div className="mt-5 flex items-center justify-between text-xs text-slate-500">
         <span>{data ? `${data.total.toLocaleString()} item${data.total === 1 ? "" : "s"}${submittedQuery ? ` matching “${submittedQuery}”` : ""}` : " "}</span>
         {data && data.processingCount > 0 && <span className="text-blue-700">{data.processingCount} processing — updating automatically</span>}
@@ -185,7 +239,7 @@ export function LibraryBrowser({ role, initialQuery }: { role: "admin" | "editor
       ) : data && data.items.length === 0 ? (
         <div className="mt-4 rounded-xl border border-[#e8ebef] bg-white px-6 py-14 text-center">
           <div className="mx-auto grid size-11 place-items-center rounded-full bg-slate-100 text-slate-500"><Archive size={19} /></div>
-          <h3 className="mt-4 text-sm font-semibold">{submittedQuery || filter !== "all" || folder ? "No media matches these filters" : "Your library is ready for its first asset"}</h3>
+          <h3 className="mt-4 text-sm font-semibold">{submittedQuery || filter !== "all" || folder || activeKeys.size ? "No media matches these filters" : "Your library is ready for its first asset"}</h3>
           <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-slate-500">{submittedQuery || filter !== "all" || folder ? "Try a different search or clear the filters." : "Uploaded files are saved to the media drive and appear here automatically."}</p>
           {role !== "viewer" && <a href="/uploads" className="mt-4 inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium"><Upload size={14} />Upload media</a>}
         </div>
