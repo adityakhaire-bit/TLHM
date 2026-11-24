@@ -84,9 +84,31 @@ describe("auto-sort and auto-tags", () => {
     const rows = normalizeAnalysis(parseModelJson(JSON.stringify(json)), 18);
     expect(rows.category).toBe("fitness");
     expect(rows.segments[1].attributes).toContainEqual(expect.objectContaining({ category: "pose", value: "arms raised" }));
-    expect(rows.autoTags.slice(0, 3)).toEqual(["fitness", "black t-shirt", "black microphone"]);
+    expect(rows.autoTags.slice(0, 5)).toEqual(["fitness", "speaking", "talking to camera", "black t-shirt", "black microphone"]);
     expect(rows.autoTags).toContain("arms raised");
     expect(rows.autoTags).toContain("dance studio");
+  });
+
+  it("tags what is said: speech type, summary and spoken topics", () => {
+    const json = structuredClone(sample) as Record<string, unknown> & typeof sample;
+    Object.assign(json, { speech_type: "Interview", speech_summary: "person_1 explains how to warm up.", spoken_topics: ["Warm-up Routine", "injury prevention", "x"] });
+    (json.segments[0] as Record<string, unknown>).topic = "Stretching the hamstrings";
+    const rows = normalizeAnalysis(parseModelJson(JSON.stringify(json)), 18);
+    expect(rows.speechType).toBe("interview");
+    expect(rows.speechSummary).toBe("person_1 explains how to warm up.");
+    expect(rows.spokenTopics).toEqual(["warm-up routine", "injury prevention", "stretching the hamstrings"]);
+    expect(rows.autoTags).toEqual(expect.arrayContaining(["speaking", "interview", "warm-up routine", "injury prevention"]));
+    expect(rows.segments[1].attributes).toContainEqual(expect.objectContaining({ category: "topic", value: "stretching the hamstrings" }));
+    expect(rows.segments[1].searchText).toContain("talks about stretching the hamstrings");
+    expect(rows.searchText).toContain("talks about warm-up routine");
+  });
+
+  it("marks clips without speech as 'no speech' and adds no speech tags", () => {
+    const json = { ...sample, has_speech: false, transcript: [], speech_type: "no speech", spoken_topics: ["ignored"], segments: [{ start_s: 0, end_s: 5, description: "Dance.", people: [] }] };
+    const rows = normalizeAnalysis(parseModelJson(JSON.stringify(json)), 5);
+    expect(rows.speechType).toBe("no speech");
+    expect(rows.spokenTopics).toEqual([]);
+    expect(rows.autoTags).not.toContain("speaking");
   });
 
   it("ignores unknown or 'other' categories", () => {

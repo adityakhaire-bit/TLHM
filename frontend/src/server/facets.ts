@@ -14,7 +14,7 @@ export async function aiFacets(limit = 14): Promise<FacetGroup[]> {
   const [attributes, colors, categories] = await Promise.all([
     prisma.$queryRawUnsafe<Row[]>(
       `SELECT a.category, a.value, IF(a.category = 'clothing', a.color, NULL) AS color, COUNT(DISTINCT a.media_id) AS n
-       FROM analysis_attributes a WHERE ${live} AND a.category IN ('clothing', 'accessory', 'pose', 'action', 'shot', 'setting')
+       FROM analysis_attributes a WHERE ${live} AND a.category IN ('clothing', 'accessory', 'pose', 'action', 'shot', 'setting', 'speech', 'spoken')
        GROUP BY a.category, a.value, IF(a.category = 'clothing', a.color, NULL) ORDER BY n DESC, a.value LIMIT 400`,
     ),
     prisma.$queryRawUnsafe<Row[]>(
@@ -34,6 +34,8 @@ export async function aiFacets(limit = 14): Promise<FacetGroup[]> {
 
   return [
     { id: "category", title: "Category", facets: categories.map((row) => ({ key: `category:${row.category}`, label: row.category ?? "", count: row._count._all })) },
+    { id: "speech", title: "Speech", facets: pick("speech") },
+    { id: "spoken", title: "Talks about", facets: pick("spoken") },
     { id: "clothing", title: "Clothing", facets: pick("clothing") },
     { id: "color", title: "Clothing colour", facets: colors.slice(0, limit).map(facet) },
     { id: "pose", title: "Pose", facets: pick("pose") },

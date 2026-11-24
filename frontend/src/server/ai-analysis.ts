@@ -9,12 +9,14 @@ import { makeAnalysisClip } from "./ffmpeg";
 import { checkStorage, removeQuietly, resolveStoragePath } from "./storage";
 
 /** Bump when the prompt or the stored structure changes, so old analyses can be found and redone. */
-export const PIPELINE_VERSION = 3;
+export const PIPELINE_VERSION = 4;
 
 const SHOT_TYPES = ["extreme close-up", "close-up", "medium close-up", "medium shot", "full-body shot", "wide shot", "over-the-shoulder", "aerial", "other"];
 /** Clip categories used to auto-sort the library (stored in media_files.category when it is empty). */
 export const CATEGORIES = ["dance", "fitness", "interview", "talk", "tutorial", "performance", "behind the scenes", "event", "promo", "vlog", "other"];
 const BODY_REGIONS = ["upper", "lower", "full", "feet", "head", "accessory"];
+/** How speech is used in the clip (stored as a clip-level "speech" attribute for filtering). */
+export const SPEECH_TYPES = ["talking to camera", "interview", "conversation", "presentation", "voice-over", "singing", "no speech"];
 
 const S = (description?: string) => ({ type: "STRING", ...(description ? { description } : {}) });
 const N = (description?: string) => ({ type: "NUMBER", ...(description ? { description } : {}) });
@@ -35,6 +37,9 @@ export const RESPONSE_SCHEMA = O({
   people_count: { type: "INTEGER" },
   tags: A(S()),
   topics: A(S("topics discussed in speech")),
+  speech_type: { type: "STRING", enum: SPEECH_TYPES },
+  speech_summary: S("one or two sentences: who is speaking and what they are talking about; empty if nobody speaks"),
+  spoken_topics: A(S("2-5 word lower-case phrase for a subject the speaker talks about, e.g. 'warm-up routine', 'diet tips', 'choreography counts'")),
   people: A(O({ label: S("person_1, person_2... consistent across the video, or a name ONLY if spoken or shown on screen"), description: S("appearance: hair, build, distinguishing features, overall outfit") })),
   segments: A(O({
     start_s: N("segment start in seconds"),
@@ -43,6 +48,7 @@ export const RESPONSE_SCHEMA = O({
     shot_type: { type: "STRING", enum: SHOT_TYPES },
     camera_movement: S("static, pan, tilt, zoom, handheld, tracking, gimbal"),
     setting: S(),
+    topic: S("what is being said in this segment as a 2-5 word lower-case phrase, e.g. 'explaining hip movement'; empty if nobody speaks"),
     people: A(O({
       label: S(),
       position: S("left, centre, right, foreground, background"),
@@ -81,6 +87,9 @@ export const analysisSchema = z.object({
   people_count: z.preprocess((value) => (typeof value === "number" ? Math.round(value) : null), z.number().nullable()),
   tags: list(str),
   topics: list(str),
+  speech_type: str,
+  speech_summary: str,
+  spoken_topics: list(str),
   people: list(z.object({ label: str, description: str })),
   segments: list(z.object({
     start_s: num,
@@ -89,6 +98,7 @@ export const analysisSchema = z.object({
     shot_type: str,
     camera_movement: str,
     setting: str,
+    topic: str,
     people: list(z.object({
       label: str,
       position: str,
@@ -126,6 +136,7 @@ Rules:
 - Label people person_1, person_2... and keep the same label for the same person across all segments. Do NOT identify anyone from their face. Use a real name only if it is spoken in the audio or written on screen, and then also mention it in the person's description.
 - Describe only what is visible or audible. If unsure, leave a field empty rather than guessing.
 - Transcript: ${compact ? "only the key sentences (max 40 lines)" : "every spoken sentence"}, verbatim in the spoken language, with start/end seconds and the speaker label. Empty list if there is no speech.
+- Speech: speech_type says how speech is used (talking to camera, interview, conversation, presentation, voice-over, singing, or no speech). speech_summary says who speaks and what about, e.g. "person_1 talks to camera about warming up before a dance class". spoken_topics: 3 to 10 short phrases for the subjects actually talked about, so editors can search for them. For every segment with speech, set topic to what is being said in it.
 - Tags: 5 to 15 short lower-case search keywords (content, mood, setting, style). Topics: subjects discussed in the speech.`;
 }
 
@@ -185,6 +196,8 @@ export function normalizeAnalysis(json: AnalysisJson, durationSeconds: number | 
       const shotType = canonical(segment.shot_type, 40) || null;
       if (shotType && shotType !== "other") attributes.push({ category: "shot", value: shotType, color: null, pattern: null, bodyRegion: null, personLabel: null });
       const setting = canonical(segment.setting || json.setting, 120) || null;
+      const topic = clean(segment.topic, 80) || null;
+      if (topic) attributes.push({ category: "topic", value: topic, color: null, pattern: null, bodyRegion: null, personLabel: null });
       if (setting) attributes.push({ category: "setting", value: setting, color: null, pattern: null, bodyRegion: null, personLabel: null });
 
       // De-duplicate identical attributes within the segment.
@@ -198,7 +211,7 @@ export function normalizeAnalysis(json: AnalysisJson, durationSeconds: number | 
 
       const speech = transcript.filter((line) => line.startMs < endMs && line.endMs >= startMs).map((line) => line.text).join(" ");
       const searchText = [
-        segment.description, shotType, clean(segment.camera_movement, 40), setting,
+        segment.description, shotType, clean(segment.camera_movement, 40), setting, topic && `talks about ${topic}`,
         ...unique.map((attribute) => [attribute.color, attribute.pattern, attribute.value].filter(Boolean).join(" ")),
         speech,
       ].filter(Boolean).join(" | ").toLowerCase().slice(0, 60_000);
@@ -209,12 +222,22 @@ export function normalizeAnalysis(json: AnalysisJson, durationSeconds: number | 
         shotType: shotType && shotType !== "other" ? shotType : null,
         cameraMovement: clean(segment.camera_movement, 40) || null,
         setting,
+        topic,
         searchText,
         attributes: unique,
       };
     })
     .sort((a, b) => a.startMs - b.startMs);
 
+  const hasSpeech = json.has_speech || transcript.length > 0;
+  const someoneSpeaks = segments.some((segment) => segment.attributes.some((attribute) => attribute.category === "action" && attribute.value === "talking"));
+  const rawType = clean(json.speech_type, 32);
+  const speechType = SPEECH_TYPES.includes(rawType) && !(rawType === "no speech" && hasSpeech) ? rawType : hasSpeech ? (someoneSpeaks ? "talking to camera" : "voice-over") : "no speech";
+  const speechSummary = speechType === "no speech" ? null : json.speech_summary.trim().slice(0, 2000) || null;
+  const spokenTopics = speechType === "no speech" ? [] : [...new Set([
+    ...json.spoken_topics.map((topic) => clean(topic, 64)),
+    ...segments.map((segment) => segment.topic ?? ""),
+  ].filter((topic) => topic && topic.length > 2))].slice(0, 15);
   const tags = [...new Set(json.tags.map((tag) => clean(tag, 64)).filter(Boolean))].slice(0, 20);
   const category = CATEGORIES.includes(clean(json.category)) && clean(json.category) !== "other" ? clean(json.category) : null;
   // Auto-tags for the clip: most frequent clothing, poses, actions, shots and setting, plus the AI keywords.
@@ -228,13 +251,16 @@ export function normalizeAnalysis(json: AnalysisJson, durationSeconds: number | 
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([name]) => name);
   };
   const autoTags = [...new Set([
-    ...(category ? [category] : []), ...top("clothing", 6), ...top("accessory", 2), ...top("pose", 4), ...top("action", 5),
+    ...(category ? [category] : []),
+    ...(speechType !== "no speech" ? ["speaking", ...(speechType === "singing" ? [] : [speechType])] : []), ...spokenTopics.slice(0, 5),
+    ...top("clothing", 6), ...top("accessory", 2), ...top("pose", 4), ...top("action", 5),
     ...top("shot", 3), ...top("setting", 2), ...tags,
   ].map((tag) => tag.slice(0, 64)).filter(Boolean))].slice(0, 30);
   const topics = [...new Set(json.topics.map((topic) => clean(topic, 80)).filter(Boolean))].slice(0, 20);
   const people = json.people.map((person) => ({ label: personLabel(person.label), description: person.description.trim().slice(0, 500) })).filter((person) => person.label);
   const searchText = [
     json.summary, json.suggested_title, json.setting, json.indoor_outdoor, ...tags, ...topics,
+    speechType, speechSummary, ...spokenTopics.map((topic) => `talks about ${topic}`),
     ...people.map((person) => person.description),
     ...segments.map((segment) => segment.searchText),
   ].filter(Boolean).join(" | ").toLowerCase().slice(0, 4_000_000);
@@ -243,12 +269,13 @@ export function normalizeAnalysis(json: AnalysisJson, durationSeconds: number | 
     summary: json.summary.trim().slice(0, 5000) || "(no summary)",
     suggestedTitle: json.suggested_title.trim().slice(0, 255) || null,
     language: clean(json.language, 40) || null,
-    hasSpeech: json.has_speech || transcript.length > 0,
+    hasSpeech,
     hasMusic: json.has_music,
     indoorOutdoor: clean(json.indoor_outdoor, 16) || null,
     setting: canonical(json.setting) || null,
     peopleCount: json.people_count ?? (people.length || null),
     tags, topics, people, segments, transcript, searchText, category, autoTags,
+    speechType, speechSummary, spokenTopics,
   };
 }
 
@@ -343,8 +370,17 @@ export async function analyzeMedia(mediaId: string, log: (message: string) => vo
           summary: rows.summary, suggestedTitle: rows.suggestedTitle, setting: rows.setting, indoorOutdoor: rows.indoorOutdoor,
           language: rows.language, hasSpeech: rows.hasSpeech, hasMusic: rows.hasMusic, peopleCount: rows.peopleCount,
           tags: rows.tags, people: rows.people, topics: rows.topics, searchText: rows.searchText,
+          speechType: rows.speechType, speechSummary: rows.speechSummary, spokenTopics: rows.spokenTopics,
           inputTokens: result.inputTokens, outputTokens: result.outputTokens, elapsedMs, rawJson: parsed as object,
         },
+      });
+      // Clip-level speech attributes (no segment): how speech is used, and every topic talked about.
+      const wholeClip = { analysisId: analysis.id, mediaId: media.id, startMs: 0, endMs: Math.round((media.duration ?? 0) * 1000), modelVersion: result.model };
+      await tx.analysisAttribute.createMany({
+        data: [
+          { ...wholeClip, category: "speech", value: rows.speechType },
+          ...rows.spokenTopics.map((value) => ({ ...wholeClip, category: "spoken", value })),
+        ],
       });
       for (const segment of rows.segments) {
         await tx.videoSegment.create({

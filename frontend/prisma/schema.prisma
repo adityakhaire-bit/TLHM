@@ -274,6 +274,10 @@ model MediaAnalysis {
   tags            Json
   people          Json
   topics          Json
+  // How speech is used ("talking to camera", "voice-over", "no speech"...), who says what, and the subjects talked about.
+  speechType      String?  @map("speech_type") @db.VarChar(32)
+  speechSummary   String?  @map("speech_summary") @db.Text
+  spokenTopics    Json?    @map("spoken_topics")
   // Lower-case text of everything above, for fast file-level search.
   searchText      String   @map("search_text") @db.MediumText
   inputTokens     Int      @default(0) @map("input_tokens")

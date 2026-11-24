@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { LoaderCircle, RotateCcw, Sparkles } from "lucide-react";
+import Link from "next/link";
+import { LoaderCircle, Mic, RotateCcw, Sparkles } from "lucide-react";
 import { api, errorMessage } from "@/lib/client";
 
 type Attribute = { category: string; value: string; color: string | null; pattern: string | null; bodyRegion: string | null; personLabel: string | null };
@@ -10,6 +11,7 @@ type Line = { startMs: number; endMs: number; speaker: string | null; text: stri
 type Analysis = {
   model: string; createdAt: string; summary: string; suggestedTitle: string | null; setting: string | null; indoorOutdoor: string | null;
   language: string | null; hasSpeech: boolean; hasMusic: boolean; peopleCount: number | null; tags: string[]; topics: string[];
+  speechType: string | null; speechSummary: string | null; spokenTopics: string[] | null;
   people: { label: string; description: string }[]; inputTokens: number; outputTokens: number; elapsedMs: number;
   segments: Segment[]; transcript: Line[];
 };
@@ -35,6 +37,7 @@ const CHIP: Record<string, string> = {
   action: "bg-amber-50 text-amber-800",
   shot: "bg-sky-50 text-sky-800",
   setting: "bg-emerald-50 text-emerald-800",
+  topic: "bg-rose-50 text-rose-800",
   object: "bg-slate-100 text-slate-700",
   person: "bg-slate-100 text-slate-700",
 };
@@ -116,6 +119,20 @@ export function MediaAiPanel({ mediaId, canEdit, onSeek }: { mediaId: string; ca
           <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
             <div className="space-y-3">
               <p className="text-sm leading-6 text-slate-800">{analysis.summary}</p>
+              {analysis.speechType && analysis.speechType !== "no speech" && (
+                <div className="rounded-lg border border-rose-100 bg-rose-50/50 p-3 text-xs">
+                  <p className="inline-flex items-center gap-1.5 font-semibold text-rose-900"><Mic size={13} />Speaking · <span className="capitalize">{analysis.speechType}</span>{analysis.language ? <span className="font-normal text-rose-700">({analysis.language})</span> : null}</p>
+                  {analysis.speechSummary && <p className="mt-1 leading-5 text-slate-800">{analysis.speechSummary}</p>}
+                  {(analysis.spokenTopics ?? []).length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className="text-slate-500">Talks about:</span>
+                      {(analysis.spokenTopics ?? []).map((topic) => (
+                        <Link key={topic} href={`/library?attr=${encodeURIComponent(`spoken|${topic}|`)}`} className={`rounded-md px-2 py-0.5 text-[11px] hover:underline ${CHIP.topic}`} title="Find other clips that talk about this">{topic}</Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex flex-wrap gap-1.5">
                 {analysis.tags.map((tag) => <span key={tag} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">#{tag}</span>)}
               </div>
@@ -160,7 +177,7 @@ export function MediaAiPanel({ mediaId, canEdit, onSeek }: { mediaId: string; ca
                     <p className="text-slate-800">{segment.description}</p>
                     <div className="flex flex-wrap gap-1">
                       {segment.attributes.filter((a) => a.category !== "person").map((attribute, index) => (
-                        <span key={index} className={`rounded-md px-1.5 py-0.5 text-[11px] ${CHIP[attribute.category] ?? CHIP.object}`} title={attribute.personLabel ? `${attribute.category} · ${attribute.personLabel}` : attribute.category}>{label(attribute)}</span>
+                        <span key={index} className={`rounded-md px-1.5 py-0.5 text-[11px] ${CHIP[attribute.category] ?? CHIP.object}`} title={attribute.personLabel ? `${attribute.category} · ${attribute.personLabel}` : attribute.category}>{attribute.category === "topic" ? `🎙 ${attribute.value}` : label(attribute)}</span>
                       ))}
                       {segment.cameraMovement && <span className={`rounded-md px-1.5 py-0.5 text-[11px] ${CHIP.shot}`}>camera: {segment.cameraMovement}</span>}
                     </div>
