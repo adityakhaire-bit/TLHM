@@ -10,7 +10,7 @@ export const MARKER_FILE = ".tmh-storage";
 export const STORAGE_DIRS = [
   "originals/videos", "originals/audio", "originals/images",
   "proxies/videos", "proxies/audio",
-  "thumbnails", "uploads-temp", "database-backups", "metadata", "logs",
+  "thumbnails", "uploads-temp", "analysis-temp", "database-backups", "metadata", "logs",
 ] as const;
 
 export function storageRoot(): string {

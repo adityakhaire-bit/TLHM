@@ -49,6 +49,14 @@ async function cleanupTempUploads() {
       removed++;
     }
   }
+  // AI analysis copies (analysis-temp/<id>.mp4) left behind by a crash; normally deleted right after upload.
+  const aiDir = path.join(storage.root, "analysis-temp");
+  for (const name of await readdir(aiDir).catch(() => [] as string[])) {
+    if (!/^[0-9a-f-]{36}\.mp4$/.test(name)) continue; // only our own temporary files
+    const file = path.join(aiDir, name);
+    const info = await stat(file).catch(() => null);
+    if (info && Date.now() - info.mtimeMs > 3600 * 1000) { await removeQuietly(file); removed++; }
+  }
   if (removed) await log(`cleanup: removed ${removed} abandoned temporary upload(s)`);
 }
 

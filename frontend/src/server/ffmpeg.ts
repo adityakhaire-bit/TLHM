@@ -130,6 +130,32 @@ export async function makeVideoProxy(input: string, output: string, durationSeco
   }
 }
 
+// Fit inside 640x360 (landscape) or 360x640 (portrait) for AI analysis; never upscale.
+const SCALE_360 =
+  "fps=2,scale=w='if(gte(iw,ih),min(640,iw),min(360,iw))':h='if(gte(iw,ih),min(360,ih),min(640,ih))'" +
+  ":force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p";
+
+/**
+ * Small temporary copy for AI analysis: 360p, 2 frames per second, mono speech-quality audio.
+ * Gemini only looks at about 1 frame per second, so this loses nothing it would use, and is
+ * roughly 10x smaller than the 720p preview, so it uploads to Google much faster.
+ */
+export async function makeAnalysisClip(input: string, output: string, durationSeconds: number | null, hasAudio: boolean) {
+  const common = (encoder: string[]) => [
+    "-hide_banner", "-nostdin", "-y", "-i", input,
+    "-map", "0:v:0", ...(hasAudio ? ["-map", "0:a:0"] : []),
+    "-vf", SCALE_360, ...encoder,
+    ...(hasAudio ? ["-c:a", "aac", "-b:a", "48k", "-ac", "1", "-ar", "22050"] : ["-an"]),
+    "-movflags", "+faststart", "-map_metadata", "-1", "-sn", "-dn", "-f", "mp4", output,
+  ];
+  const timeoutMs = Math.max(10 * 60_000, (durationSeconds ?? 0) * 2000);
+  try {
+    await run(getEnv().FFMPEG_PATH, common(["-c:v", "h264_videotoolbox", "-b:v", "350k", "-allow_sw", "1"]), { timeoutMs });
+  } catch {
+    await run(getEnv().FFMPEG_PATH, common(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30"]), { timeoutMs: timeoutMs * 2 });
+  }
+}
+
 /** Audio proxy: AAC 128 kbps stereo in an M4A container with fast-start. */
 export async function makeAudioProxy(input: string, output: string, durationSeconds: number | null, onProgress: (percent: number) => void) {
   await run(getEnv().FFMPEG_PATH, [

@@ -1,9 +1,9 @@
-// One-command development startup: frontend (Next.js, :3000) + backend (Express, :4000).
+// One-command development startup: frontend (Next.js, :3000) + media worker + backend (Express, :4000).
 //   npm run dev
 import { spawn } from "node:child_process";
 
 const services = [
-  { name: "frontend", args: ["run", "dev", "-w", "@tmh/frontend"] },
+  { name: "frontend", args: ["run", "dev:all", "-w", "@tmh/frontend"] }, // web app + media worker (previews, AI analysis)
   { name: "backend ", args: ["run", "dev", "-w", "@tmh/backend"] },
 ];
 

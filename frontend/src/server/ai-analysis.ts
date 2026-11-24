@@ -3,7 +3,9 @@ import { canonical, clean } from "./ai-vocabulary";
 import { prisma } from "./db";
 import { getEnv } from "./env";
 import { deleteFile, GeminiError, generateJson, uploadFile, type GenerateResult } from "./gemini";
-import { checkStorage, resolveStoragePath } from "./storage";
+import { mkdir } from "node:fs/promises";
+import { makeAnalysisClip } from "./ffmpeg";
+import { checkStorage, removeQuietly, resolveStoragePath } from "./storage";
 
 /** Bump when the prompt or the stored structure changes, so old analyses can be found and redone. */
 export const PIPELINE_VERSION = 2;
@@ -248,13 +250,21 @@ export async function analyzeMedia(mediaId: string, log: (message: string) => vo
   const storage = await checkStorage();
   if (!storage.ok) throw new GeminiError(storage.message, 0, true);
 
-  const source = media.proxyPath
-    ? { path: resolveStoragePath(media.proxyPath, storage.root), mime: "video/mp4" }
-    : { path: resolveStoragePath(media.originalPath, storage.root), mime: media.mimeType };
-
+  // Small temporary 360p copy made from the original (read-only), so analysis need not wait for the
+  // 720p preview and the upload to Google is ~10x smaller. Deleted as soon as it is uploaded.
   const started = Date.now();
-  const file = await uploadFile(source.path, source.mime, `tmh-${media.id}`);
-  log(`analyze ${media.id}: uploaded to Gemini in ${Math.round((Date.now() - started) / 1000)}s`);
+  const tempRelative = `analysis-temp/${media.id}.mp4`;
+  const tempPath = resolveStoragePath(tempRelative, storage.root);
+  await mkdir(resolveStoragePath("analysis-temp", storage.root), { recursive: true });
+  let file;
+  try {
+    await makeAnalysisClip(resolveStoragePath(media.originalPath, storage.root), tempPath, media.duration, Boolean(media.audioCodec));
+    const encoded = Date.now();
+    file = await uploadFile(tempPath, "video/mp4", `tmh-${media.id}`);
+    log(`analyze ${media.id}: analysis copy made in ${Math.round((encoded - started) / 1000)}s, uploaded in ${Math.round((Date.now() - encoded) / 1000)}s`);
+  } finally {
+    await removeQuietly(tempPath);
+  }
   try {
     const models = [env.GEMINI_MODEL, ...env.GEMINI_FALLBACK_MODELS.split(",").map((model) => model.trim()).filter(Boolean)];
     const info = { filename: media.originalFilename, duration: media.duration, category: media.category };
@@ -262,7 +272,9 @@ export async function analyzeMedia(mediaId: string, log: (message: string) => vo
     let parsed: AnalysisJson | null = null;
     let lastError: unknown = null;
 
-    for (const model of [...new Set(models)]) {
+    // Try models that were overloaded in the last 2 minutes last (saves a wasted request per video).
+    const ordered = [...new Set(models)].sort((a, b) => Number(isCoolingDown(a)) - Number(isCoolingDown(b)));
+    for (const model of ordered) {
       for (const compact of [false, true]) {
         try {
           result = await generateJson(model, file, buildPrompt(info, compact), RESPONSE_SCHEMA);
@@ -290,6 +302,7 @@ export async function analyzeMedia(mediaId: string, log: (message: string) => vo
       if (parsed) break;
       const overloaded = lastError instanceof GeminiError && (lastError.status === 429 || lastError.status >= 500);
       if (!overloaded) break;
+      overloadedUntil.set(model, Date.now() + 2 * 60_000);
       log(`analyze ${media.id}: ${model} unavailable (${(lastError as Error).message.slice(0, 80)}), trying next model`);
     }
     if (!parsed || !result) throw lastError instanceof Error ? lastError : new GeminiError("AI analysis failed", 0, true);
@@ -332,6 +345,11 @@ export async function analyzeMedia(mediaId: string, log: (message: string) => vo
   } finally {
     await deleteFile(file.name); // never leave our footage on Google's servers longer than needed
   }
+}
+
+const overloadedUntil = new Map<string, number>();
+function isCoolingDown(model: string) {
+  return (overloadedUntil.get(model) ?? 0) > Date.now();
 }
 
 /** Queues AI analysis for a video unless one is already queued or running. */

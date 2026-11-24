@@ -25,8 +25,8 @@ const schema = z.object({
   GEMINI_MODEL: z.string().trim().min(1).default("gemini-3.5-flash-lite"),
   // Models to try, in order, when the main one is overloaded (comma separated).
   GEMINI_FALLBACK_MODELS: z.string().default("gemini-3.1-flash-lite"),
-  GEMINI_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
-  // "true": every new video is analysed automatically after its preview is made.
+  GEMINI_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(3),
+  // "true": every new video is analysed automatically right after upload (in parallel with its preview).
   AI_AUTO_ANALYZE: z.enum(["true", "false"]).default("true"),
 });
 

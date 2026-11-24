@@ -103,6 +103,13 @@ export async function generateJson(model: string, file: GeminiFile, prompt: stri
   }, 15 * 60_000);
 
   let response = await call(true);
+  // "High demand" (503) spikes usually last seconds: wait briefly and try the same model twice more.
+  for (const wait of [4000, 10_000]) {
+    if (response.status !== 503) break;
+    await response.body?.cancel();
+    await new Promise((resolve) => setTimeout(resolve, wait + Math.random() * 2000));
+    response = await call(true);
+  }
   if (response.status === 400) {
     const error = await failure(response, "Gemini analysis");
     if (!/schema/i.test(error.message)) throw error;

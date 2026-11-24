@@ -95,6 +95,8 @@ export async function runJob(job: ProcessingJob, log: (message: string) => void 
       });
       const followUps = followUpJobs(media.mediaType);
       await prisma.processingJob.createMany({ data: followUps.map((jobType) => ({ mediaId: media.id, jobType })) });
+      // AI analysis starts right away, in parallel with the preview (it makes its own small copy).
+      if (media.mediaType === "video" && getEnv().AI_AUTO_ANALYZE === "true" && geminiConfigured()) await queueAnalysis(media.id);
       log(`job ${job.id}: probed ${media.id} (${info.width ?? "-"}x${info.height ?? "-"}, ${info.duration ?? 0}s); queued ${followUps.join(", ")}`);
     }
 
@@ -142,10 +144,6 @@ export async function runJob(job: ProcessingJob, log: (message: string) => void 
         }),
       ]);
       log(`job ${job.id}: proxy for ${media.id} with ${encoder} in ${Math.round((Date.now() - started) / 1000)}s`);
-      if (isVideo && getEnv().AI_AUTO_ANALYZE === "true" && geminiConfigured()) {
-        await queueAnalysis(media.id);
-        log(`job ${job.id}: queued AI analysis for ${media.id}`);
-      }
     }
 
     if (job.jobType === "analyze") {
@@ -159,8 +157,8 @@ export async function runJob(job: ProcessingJob, log: (message: string) => void 
     const retry = isAi
       ? job.attempts < MAX_AI_ATTEMPTS && (!(error instanceof GeminiError) || error.retryable)
       : job.attempts < MAX_ATTEMPTS && !/missing|damaged|No (video|audio) stream/.test(message);
-    // AI: back off 1, 2, 4, 8 minutes so an overloaded or rate-limited API can recover.
-    const delay = isAi ? 60_000 * 2 ** Math.max(0, job.attempts - 1) : 30_000;
+    // AI: back off 20 s, 40 s, 80 s, 160 s so an overloaded or rate-limited API can recover.
+    const delay = isAi ? 20_000 * 2 ** Math.max(0, job.attempts - 1) : 30_000;
     await prisma.processingJob.update({
       where: { id: job.id },
       data: retry
