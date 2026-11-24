@@ -28,6 +28,9 @@ const schema = z.object({
   GEMINI_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(3),
   // "true": every new video is analysed automatically right after upload (in parallel with its preview).
   AI_AUTO_ANALYZE: z.enum(["true", "false"]).default("true"),
+  // "true": computers on the office network (192.168.x.x etc.) can browse view-only without signing in.
+  // Admins can switch this from the "Share with team" page (that choice is saved and wins over .env).
+  LAN_GUEST_ACCESS: z.enum(["true", "false"]).default("true"),
 });
 
 export type ServerEnv = z.infer<typeof schema>;

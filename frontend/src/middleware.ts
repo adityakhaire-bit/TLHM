@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { isOfficeNetworkRequest } from "@/server/lan-detect";
 
 const SESSION_COOKIE = "tmh_session";
 
@@ -10,6 +11,8 @@ const SESSION_COOKIE = "tmh_session";
  */
 export function middleware(request: NextRequest) {
   if (request.cookies.get(SESSION_COOKIE)?.value) return NextResponse.next();
+  // Office Wi-Fi visitors: the page itself decides (guest access may be switched off by an admin).
+  if (isOfficeNetworkRequest(request.headers)) return NextResponse.next();
   const loginUrl = request.nextUrl.clone();
   loginUrl.pathname = "/login";
   loginUrl.search = "";

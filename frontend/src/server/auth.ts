@@ -1,15 +1,23 @@
 import { createHash, randomBytes } from "node:crypto";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { Role } from "@/generated/prisma/client";
 import { prisma } from "./db";
 import { getEnv } from "./env";
 import { ApiError } from "./http";
+import { isOfficeNetworkRequest, lanGuestEnabled } from "./lan-access";
 
 export const SESSION_COOKIE = "tmh_session";
 const ROLE_RANK: Record<Role, number> = { viewer: 1, editor: 2, admin: 3 };
 
-export type SessionUser = { id: number; username: string; displayName: string; role: Role };
+export type SessionUser = { id: number; username: string; displayName: string; role: Role; guest?: boolean };
+
+/** View-only visitor on the office Wi-Fi (not a database user: id 0, never written anywhere). */
+export const WIFI_GUEST: SessionUser = Object.freeze({ id: 0, username: "wifi-guest", displayName: "Office Wi-Fi guest", role: "viewer", guest: true });
+
+async function guestFor(requestHeaders: Headers): Promise<SessionUser | null> {
+  return isOfficeNetworkRequest(requestHeaders) && (await lanGuestEnabled()) ? WIFI_GUEST : null;
+}
 
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
 
@@ -102,7 +110,7 @@ function assertSameOrigin(request: Request) {
 /** For API routes: returns the signed-in user or throws 401/403. */
 export async function requireUser(request: Request, minimum: Role = "viewer"): Promise<SessionUser> {
   assertSameOrigin(request);
-  const user = await userFromToken(sessionTokenFrom(request));
+  const user = (await userFromToken(sessionTokenFrom(request))) ?? (minimum === "viewer" ? await guestFor(request.headers) : null);
   if (!user) throw new ApiError(401, "Please sign in to continue", "unauthenticated");
   if (!hasRole(user, minimum)) throw new ApiError(403, `This action needs the ${minimum} role`, "forbidden");
   return user;
@@ -111,7 +119,7 @@ export async function requireUser(request: Request, minimum: Role = "viewer"): P
 /** For server-rendered pages: returns the signed-in user or redirects to /login. */
 export async function requirePageUser(): Promise<SessionUser> {
   const store = await cookies();
-  const user = await userFromToken(store.get(SESSION_COOKIE)?.value);
+  const user = (await userFromToken(store.get(SESSION_COOKIE)?.value)) ?? (await guestFor(await headers()));
   if (!user) redirect("/login");
   return user;
 }

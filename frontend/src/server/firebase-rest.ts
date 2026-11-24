@@ -27,6 +27,7 @@ function translate(code: string): ApiError {
     case "TOO_MANY_ATTEMPTS_TRY_LATER": return new ApiError(429, "Too many attempts. Wait a few minutes and try again.", "too_many_attempts");
     case "OPERATION_NOT_ALLOWED": return new ApiError(503, "Email sign-in is not enabled in Firebase yet (Authentication → Sign-in method → Email/Password).", "email_provider_disabled");
     case "INVALID_CONTINUE_URI":
+    case "UNAUTHORIZED_CONTINUE_URI":
     case "UNAUTHORIZED_DOMAIN": return new ApiError(400, "This address is not authorised in Firebase (Authentication → Settings → Authorized domains).", "unauthorized_domain");
     default: return new ApiError(502, "The sign-in service returned an error. Please try again.", "firebase_error");
   }
@@ -65,11 +66,29 @@ export async function firebaseSetDisplayName(idToken: string, displayName: strin
 
 /** Sends Firebase's "confirm your email" message. continueUrl must be on an authorised domain. */
 export async function firebaseSendVerification(idToken: string, continueUrl?: string) {
-  await call("accounts:sendOobCode", { requestType: "VERIFY_EMAIL", idToken, ...(continueUrl ? { continueUrl } : {}) });
+  await sendOobCode({ requestType: "VERIFY_EMAIL", idToken }, continueUrl);
 }
 
 export async function firebaseSendPasswordReset(email: string, continueUrl?: string) {
-  await call("accounts:sendOobCode", { requestType: "PASSWORD_RESET", email, ...(continueUrl ? { continueUrl } : {}) });
+  await sendOobCode({ requestType: "PASSWORD_RESET", email }, continueUrl);
+}
+
+/**
+ * Sends a Firebase email with a "back to the media hub" link when the address is one Firebase knows.
+ * Opened by an office IP (http://192.168.1.x) that is not in Firebase's authorised domains, Firebase refuses
+ * the return link: then the email is sent without it (Firebase shows its own "done" page), so nobody has to
+ * add IP addresses to Firebase.
+ */
+async function sendOobCode(body: Record<string, unknown>, continueUrl?: string) {
+  if (continueUrl) {
+    try {
+      await call("accounts:sendOobCode", { ...body, continueUrl });
+      return;
+    } catch (error) {
+      if (!(error instanceof ApiError && error.code === "unauthorized_domain")) throw error;
+    }
+  }
+  await call("accounts:sendOobCode", body);
 }
 
 /** The address people should return to after clicking an email link: this site's own login page. */

@@ -3,6 +3,7 @@ import { isAllowedEmail, usernameFromEmail } from "../../src/server/google-auth"
 
 describe("Google sign-in domain rule", () => {
   const domains = ["example-studio.in"];
+  const companyDomains = ["purplemangomedia.in", "outbrand.in"];
 
   it("accepts only the exact allowed domain", () => {
     expect(isAllowedEmail("anita@example-studio.in", domains)).toBe(true);
@@ -20,6 +21,12 @@ describe("Google sign-in domain rule", () => {
 
   it("allows nobody when no domain is configured", () => {
     expect(isAllowedEmail("anita@example-studio.in", [])).toBe(false);
+  });
+
+  it("accepts each configured company domain", () => {
+    expect(isAllowedEmail("anita@purplemangomedia.in", companyDomains)).toBe(true);
+    expect(isAllowedEmail("anita@outbrand.in", companyDomains)).toBe(true);
+    expect(isAllowedEmail("anita@gmail.com", companyDomains)).toBe(false);
   });
 
   it("makes safe usernames from emails", () => {

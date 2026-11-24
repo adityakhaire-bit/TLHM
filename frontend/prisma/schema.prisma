@@ -358,3 +358,12 @@ model TranscriptLine {
   @@index([analysisId])
   @@map("transcript_lines")
 }
+
+/// Small app-wide switches an admin can change from the UI (e.g. office Wi-Fi guest access).
+model AppSetting {
+  key       String   @id @db.VarChar(64)
+  value     String   @db.VarChar(255)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_settings")
+}

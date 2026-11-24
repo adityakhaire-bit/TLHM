@@ -1,11 +1,11 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Activity, Archive, AudioLines, FolderTree, HardDrive, Image as ImageIcon, Search, Upload, Users, Video } from "lucide-react";
+import { Activity, Archive, AudioLines, FolderTree, HardDrive, Image as ImageIcon, Search, Share2, Upload, Users, Video } from "lucide-react";
 import type { SessionUser } from "@/server/auth";
 import { SignOutButton } from "./sign-out-button";
 
-type NavKey = "overview" | "all" | "video" | "audio" | "image" | "folders" | "uploads" | "storage" | "users";
+type NavKey = "overview" | "all" | "video" | "audio" | "image" | "folders" | "uploads" | "storage" | "users" | "share";
 
 const workspaceLinks: { key: NavKey; label: string; icon: LucideIcon; href: string }[] = [
   { key: "overview", label: "Overview", icon: Activity, href: "/" },
@@ -19,6 +19,7 @@ const workspaceLinks: { key: NavKey; label: string; icon: LucideIcon; href: stri
 const manageLinks: { key: NavKey; label: string; icon: LucideIcon; href: string }[] = [
   { key: "storage", label: "Storage & backups", icon: HardDrive, href: "/storage" },
   { key: "users", label: "Users & access", icon: Users, href: "/users" },
+  { key: "share", label: "Share with team", icon: Share2, href: "/share" },
 ];
 
 /** Shared sidebar + header used by every signed-in page (same visual design as the original dashboard). */
@@ -39,8 +40,10 @@ export function AppShell({ user, active, crumb, query, children }: { user: Sessi
         <div className="mt-9"><p className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-[.12em] text-slate-400">Manage</p><nav className="space-y-1">{manageLinks.filter((item) => item.key !== "users" || user.role === "admin").map(link)}</nav></div>
         <div className="absolute inset-x-5 bottom-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <p className="truncate text-xs font-semibold">{user.displayName || user.username}</p>
-          <p className="mt-0.5 text-xs capitalize text-slate-500">{user.role}</p>
-          <SignOutButton className="mt-3 text-xs font-medium text-slate-700 hover:text-slate-950" />
+          <p className="mt-0.5 text-xs capitalize text-slate-500">{user.guest ? "View only · office Wi-Fi" : user.role}</p>
+          {user.guest
+            ? <Link href="/login" className="mt-3 block text-xs font-medium text-slate-700 hover:text-slate-950">Sign in</Link>
+            : <SignOutButton className="mt-3 text-xs font-medium text-slate-700 hover:text-slate-950" />}
         </div>
       </aside>
       <section className="lg:pl-[248px]">
@@ -52,7 +55,9 @@ export function AppShell({ user, active, crumb, query, children }: { user: Sessi
               <input name="q" defaultValue={query} placeholder="Search media, tags, folders…" aria-label="Search the library" className="w-56 rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-slate-400 xl:w-72" />
             </form>
             {user.role !== "viewer" && <a href="/uploads" className="flex items-center gap-2 rounded-lg bg-[#182230] px-3.5 py-2 text-sm font-medium text-white"><Upload size={15} /><span className="hidden sm:inline">Upload assets</span></a>}
-            <SignOutButton className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 lg:hidden" />
+            {user.guest
+              ? <Link href="/login" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600">Sign in</Link>
+              : <SignOutButton className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 lg:hidden" />}
           </div>
         </header>
         {/* Compact navigation for phones and tablets (the sidebar is desktop-only). */}
